@@ -1,5 +1,7 @@
 import React from "react";
 import { View, Text, Image, TouchableOpacity, StyleSheet, Linking, useWindowDimensions } from "react-native";
+import FacebookIcon from "../assets/icons/FacebookIcon";
+import ProfileIcon from "../assets/icons/ProfileIcon";
 
 export default function Footer() {
   const { width } = useWindowDimensions();
@@ -39,6 +41,7 @@ export default function Footer() {
           <Text style={styles.title}>Collaborators</Text>
           <TouchableOpacity><Text style={styles.link}>All Collaborators</Text></TouchableOpacity>
           <TouchableOpacity style={styles.translatorBtn}>
+            <Text style={styles.translatorText}><ProfileIcon size={13} color="white"/>Translator sign in</Text>
           </TouchableOpacity>
         </View>
 
@@ -47,6 +50,7 @@ export default function Footer() {
           <Text style={styles.title}>Connect</Text>
           <TouchableOpacity><Text style={styles.link}>About Let's Read</Text></TouchableOpacity>
           <TouchableOpacity><Text style={styles.link}>Let's Read Support</Text></TouchableOpacity>
+          <TouchableOpacity><FacebookIcon size={20} color="blue" /></TouchableOpacity>
           <TouchableOpacity style={styles.donateBtn}><Text style={styles.donateText}>♡ Donate</Text></TouchableOpacity>
         </View>
       </View>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import {
   View,
   Text,
@@ -7,18 +7,38 @@ import {
   TouchableOpacity,
   Image,
   Dimensions,
+  SafeAreaView,
+  ActivityIndicator,
 } from "react-native";
 import { supabase } from "../lib/supabase";
 import HeaderMobile from "../components/HeaderMobile";
 import HeaderDesktop from "../components/HeaderDesktop";
+import FooterMobile from "../components/FooterMobile";
 import FooterDesktop from "../components/FooterDesktop";
 import ImageSlider from "../components/ImageSlider";
 import CategoryList from "../components/CategoryList";
 import AppIntro from "../components/AppIntro";
 
+// 📱 Hook responsive
+const useIsMobile = () => {
+  const getIsMobile = () => Dimensions.get("screen").width < 900;
+  const [isMobile, setIsMobile] = useState(getIsMobile());
+
+  useLayoutEffect(() => {
+    const update = ({ screen }: { screen: any }) => {
+      setIsMobile(screen.width < 900);
+    };
+    const sub = Dimensions.addEventListener("change", update);
+    return () => sub?.remove?.();
+  }, []);
+
+  return isMobile;
+};
+
+// Responsive số cột
 const useNumColumns = () => {
   const [numColumns, setNumColumns] = useState(() => {
-    const width = Dimensions.get("window").width;
+    const width = Dimensions.get("screen").width;
     if (width < 600) return 2;
     if (width < 900) return 3;
     if (width < 1200) return 4;
@@ -26,8 +46,8 @@ const useNumColumns = () => {
   });
 
   useEffect(() => {
-    const updateColumns = ({ window }: { window: any }) => {
-      const width = window.width;
+    const updateColumns = ({ screen }: { screen: any }) => {
+      const width = screen.width;
       if (width < 600) setNumColumns(2);
       else if (width < 900) setNumColumns(3);
       else if (width < 1200) setNumColumns(4);
@@ -40,9 +60,10 @@ const useNumColumns = () => {
   return numColumns;
 };
 
+// Responsive chiều cao ảnh
 const useResponsiveImageHeight = () => {
   const [height, setHeight] = useState(() => {
-    const width = Dimensions.get("window").width;
+    const width = Dimensions.get("screen").width;
     if (width < 600) return 180;
     if (width < 900) return 220;
     if (width < 1200) return 260;
@@ -50,8 +71,8 @@ const useResponsiveImageHeight = () => {
   });
 
   useEffect(() => {
-    const updateHeight = ({ window }: { window: any }) => {
-      const width = window.width;
+    const updateHeight = ({ screen }: { screen: any }) => {
+      const width = screen.width;
       if (width < 600) setHeight(180);
       else if (width < 900) setHeight(220);
       else if (width < 1200) setHeight(260);
@@ -64,17 +85,7 @@ const useResponsiveImageHeight = () => {
   return height;
 };
 
-const useIsMobile = () => {
-  const [isMobile, setIsMobile] = useState(Dimensions.get("window").width < 900);
-  useEffect(() => {
-    const update = ({ window }: { window: any }) =>
-      setIsMobile(window.width < 900);
-    const sub = Dimensions.addEventListener("change", update);
-    return () => sub?.remove?.();
-  }, []);
-  return isMobile;
-};
-
+// 📚 Danh sách sách theo danh mục
 const BookListByCategory = ({
   books,
   categoryName,
@@ -90,7 +101,7 @@ const BookListByCategory = ({
   const totalPages = Math.ceil(books.length / pageSize);
   const pagedBooks = books.slice(page * pageSize, (page + 1) * pageSize);
 
-  const windowWidth = Dimensions.get("window").width * 0.9;
+  const windowWidth = Dimensions.get("screen").width * 0.9;
   const bookWidth = (windowWidth - (numColumns - 1) * 8) / numColumns;
 
   return (
@@ -147,11 +158,13 @@ const BookListByCategory = ({
   );
 };
 
+// 🏠 Component chính
 export default function Index() {
   const isMobile = useIsMobile();
   const [categories, setCategories] = useState<any[]>([]);
   const [booksByCategory, setBooksByCategory] = useState<Record<string, any[]>>({});
   const [languageId] = useState("4846240843956224");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -185,43 +198,72 @@ export default function Index() {
 
       setCategories(filteredCategories);
       setBooksByCategory(grouped);
+      setLoading(false);
     };
     fetchData();
   }, [languageId]);
 
+  if (loading) {
+    return (
+      <SafeAreaView
+        style={[styles.container, { justifyContent: "center", alignItems: "center" }]}
+      >
+        <ActivityIndicator size="large" color="#999" />
+      </SafeAreaView>
+    );
+  }
+
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {isMobile ? <HeaderMobile /> : <HeaderDesktop />}
 
-      <ScrollView contentContainerStyle={styles.scrollContainer}>
-        <View style={{ marginHorizontal: "-5%" }}>
-          <ImageSlider />
-        </View>
-        {categories.map((cat) => (
-          <BookListByCategory
-            key={cat.id}
-            books={booksByCategory[cat.id] || []}
-            categoryName={cat.name}
+      <View style={{ flex: 1 }}>
+        <ScrollView
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingVertical: 16,
+            paddingHorizontal: "5%",
+            paddingBottom: isMobile ? 100 : 40, // chừa chỗ cho footer mobile
+          }}
+        >
+          <View style={{ marginHorizontal: "-5%" }}>
+            <ImageSlider />
+          </View>
+
+          {categories.map((cat) => (
+            <BookListByCategory
+              key={cat.id}
+              books={booksByCategory[cat.id] || []}
+              categoryName={cat.name}
+            />
+          ))}
+
+          <CategoryList
+            onSelectCategory={(cat: { id: string; name: string; icon: string }) =>
+              console.log("Selected:", cat.name)
+            }
           />
-        ))}
-        <CategoryList
-          onSelectCategory={(cat: { id: string; name: string; icon: string }) =>
-            console.log("Selected:", cat.name)
-          }
-        />
-        <AppIntro />
-        <FooterDesktop />
-      </ScrollView>
-    </View>
+
+          {/* ✅ Chỉ hiển thị AppIntro khi desktop */}
+          {!isMobile && <AppIntro />}
+
+          {/* ✅ FooterDesktop nằm trong ScrollView */}
+          {!isMobile && <FooterDesktop />}
+        </ScrollView>
+
+        {/* ✅ FooterMobile luôn cố định đáy màn hình */}
+        {isMobile && (
+          <View style={styles.footerMobileWrapper}>
+            <FooterMobile />
+          </View>
+        )}
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f9fafb" },
-  scrollContainer: {
-    paddingVertical: 16,
-    paddingHorizontal: "5%",
-  },
   categoryHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -244,4 +286,14 @@ const styles = StyleSheet.create({
     borderColor: "#ccc",
   },
   bookTitle: { marginTop: 4, fontSize: 16, fontWeight: "600" },
+  footerMobileWrapper: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "#fff",
+    borderTopWidth: 1,
+    borderColor: "#ddd",
+    zIndex: 10,
+  },
 });

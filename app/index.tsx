@@ -18,8 +18,9 @@ import FooterDesktop from "../components/FooterDesktop";
 import ImageSlider from "../components/ImageSlider";
 import CategoryList from "../components/CategoryList";
 import AppIntro from "../components/AppIntro";
+import BookDetailPopup from "../components/BookDetailPopup"; // ✅ popup chi tiết sách
 
-// 📱 Hook responsive
+// 📱 Hook kiểm tra thiết bị
 const useIsMobile = () => {
   const getIsMobile = () => Dimensions.get("screen").width < 900;
   const [isMobile, setIsMobile] = useState(getIsMobile());
@@ -35,7 +36,7 @@ const useIsMobile = () => {
   return isMobile;
 };
 
-// Responsive số cột
+// 🔢 Số cột theo độ rộng
 const useNumColumns = () => {
   const [numColumns, setNumColumns] = useState(() => {
     const width = Dimensions.get("screen").width;
@@ -60,7 +61,7 @@ const useNumColumns = () => {
   return numColumns;
 };
 
-// Responsive chiều cao ảnh
+// 📏 Chiều cao ảnh responsive
 const useResponsiveImageHeight = () => {
   const [height, setHeight] = useState(() => {
     const width = Dimensions.get("screen").width;
@@ -85,13 +86,15 @@ const useResponsiveImageHeight = () => {
   return height;
 };
 
-// 📚 Danh sách sách theo danh mục
+// 🧱 Danh sách sách trong từng danh mục
 const BookListByCategory = ({
   books,
   categoryName,
+  onSelectBook,
 }: {
   books: any[];
   categoryName: string;
+  onSelectBook: (book: any) => void;
 }) => {
   const [page, setPage] = useState(0);
   const numColumns = useNumColumns();
@@ -134,7 +137,11 @@ const BookListByCategory = ({
 
       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
         {pagedBooks.map((b) => (
-          <View key={b.book_uuid} style={{ width: bookWidth, padding: 4 }}>
+          <TouchableOpacity
+            key={b.book_uuid}
+            onPress={() => onSelectBook(b)} // ✅ click mở popup
+            style={{ width: bookWidth, padding: 4 }}
+          >
             <View style={styles.bookCard}>
               <Image
                 source={{
@@ -151,20 +158,23 @@ const BookListByCategory = ({
                 {b.title}
               </Text>
             </View>
-          </View>
+          </TouchableOpacity>
         ))}
       </View>
     </View>
   );
 };
 
-// 🏠 Component chính
+// 🌍 Component chính
 export default function Index() {
   const isMobile = useIsMobile();
   const [categories, setCategories] = useState<any[]>([]);
-  const [booksByCategory, setBooksByCategory] = useState<Record<string, any[]>>({});
+  const [booksByCategory, setBooksByCategory] = useState<Record<string, any[]>>(
+    {}
+  );
   const [languageId] = useState("4846240843956224");
   const [loading, setLoading] = useState(true);
+  const [selectedBook, setSelectedBook] = useState<any>(null); // ✅ popup state
 
   useEffect(() => {
     const fetchData = async () => {
@@ -206,7 +216,10 @@ export default function Index() {
   if (loading) {
     return (
       <SafeAreaView
-        style={[styles.container, { justifyContent: "center", alignItems: "center" }]}
+        style={[
+          styles.container,
+          { justifyContent: "center", alignItems: "center" },
+        ]}
       >
         <ActivityIndicator size="large" color="#999" />
       </SafeAreaView>
@@ -223,7 +236,7 @@ export default function Index() {
             flexGrow: 1,
             paddingVertical: 16,
             paddingHorizontal: "5%",
-            paddingBottom: isMobile ? 100 : 40, // chừa chỗ cho footer mobile
+            paddingBottom: isMobile ? 100 : 40, // chừa chỗ footer mobile
           }}
         >
           <View style={{ marginHorizontal: "-5%" }}>
@@ -235,6 +248,7 @@ export default function Index() {
               key={cat.id}
               books={booksByCategory[cat.id] || []}
               categoryName={cat.name}
+              onSelectBook={(book) => setSelectedBook(book)} // ✅ click mở popup
             />
           ))}
 
@@ -244,20 +258,27 @@ export default function Index() {
             }
           />
 
-          {/* ✅ Chỉ hiển thị AppIntro khi desktop */}
+          {/* ✅ Chỉ hiện AppIntro trên desktop */}
           {!isMobile && <AppIntro />}
 
           {/* ✅ FooterDesktop nằm trong ScrollView */}
           {!isMobile && <FooterDesktop />}
         </ScrollView>
 
-        {/* ✅ FooterMobile luôn cố định đáy màn hình */}
+        {/* ✅ FooterMobile luôn cố định */}
         {isMobile && (
           <View style={styles.footerMobileWrapper}>
             <FooterMobile />
           </View>
         )}
       </View>
+
+      {/* ✅ Popup chi tiết sách */}
+      <BookDetailPopup
+        visible={!!selectedBook}
+        onClose={() => setSelectedBook(null)}
+        bookId={selectedBook?.book_uuid} // ✅ truyền book_uuid đúng chuẩn
+      />
     </SafeAreaView>
   );
 }

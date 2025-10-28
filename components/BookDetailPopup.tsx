@@ -138,11 +138,18 @@ export default function BookDetailPopup({
   }, [selectedLanguage]);
 
 const handleRead = () => {
-  router.push({
-    pathname: `/read/${book.book_uuid}`,
-    params: { bookLang: selectedLanguage }
-  });
-};
+    if (!book || !selectedLanguage) return;
+    onClose?.(); // ✅ Đóng popup ngay
+
+    // ⏳ Đợi popup ẩn rồi mới chuyển trang
+    setTimeout(() => {
+      router.push({
+        pathname: `/read/${book.book_uuid}`,
+        params: { bookLang: selectedLanguage },
+      });
+    }, 200);
+  };
+
 
   // ✅ FIX: ưu tiên PDF, fallback sang EPUB — không đổi UI
   const handleDownload = async () => {

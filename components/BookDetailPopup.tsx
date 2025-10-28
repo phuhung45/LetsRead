@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { Picker } from "@react-native-picker/picker";
 import { supabase } from "../lib/supabase";
-
+import { router } from "expo-router";
 interface Props {
   visible?: boolean;
   bookId: string | undefined;
@@ -48,9 +48,6 @@ export default function BookDetailPopup({
     { id: string; name: string }[]
   >([]);
 
-  // ============================
-  // 🔍 Fetch Book Details by Language
-  // ============================
   const fetchBookByLanguage = async (language_id: string) => {
     if (!bookId) return;
     setLoading(true);
@@ -68,39 +65,31 @@ export default function BookDetailPopup({
         return;
       }
 
-      // ✅ JOIN THỦ CÔNG để tránh lỗi "more than one relationship"
-      const { data: catRel, error: catRelErr } = await supabase
+      const { data: catRel } = await supabase
         .from("book_categories")
         .select("category_id")
         .eq("book_id", bookData.book_uuid);
-
-      if (catRelErr) throw catRelErr;
 
       const catIds = catRel?.map((c: any) => c.category_id) ?? [];
 
       let categories: string[] = [];
       if (catIds.length > 0) {
-        const { data: catNames, error: catNamesErr } = await supabase
+        const { data: catNames } = await supabase
           .from("categories")
           .select("name")
           .in("id", catIds);
 
-        if (catNamesErr) throw catNamesErr;
         categories = catNames?.map((c: any) => c.name) ?? [];
       }
 
       setBook({ ...bookData, categories });
     } catch (err) {
-      console.error("fetchBookByLanguage error:", err);
       Alert.alert("Lỗi tải dữ liệu", "Không thể tải chi tiết sách.");
     } finally {
       setLoading(false);
     }
   };
 
-  // ============================
-  // 🌐 Fetch all languages of this book_uuid
-  // ============================
   useEffect(() => {
     if (!visible || !bookId) {
       setBook(null);
@@ -112,12 +101,10 @@ export default function BookDetailPopup({
     const fetchLanguages = async () => {
       setLoading(true);
       try {
-        const { data: langRecords, error: langError } = await supabase
+        const { data: langRecords } = await supabase
           .from("books")
           .select("language_id, languages(name)")
           .eq("book_uuid", bookId);
-
-        if (langError) throw langError;
 
         const list =
           langRecords?.map((r: any) => ({
@@ -135,7 +122,6 @@ export default function BookDetailPopup({
           setBook(null);
         }
       } catch (err) {
-        console.error("fetchLanguages error:", err);
         Alert.alert("Lỗi tải dữ liệu", "Không thể tải chi tiết sách.");
       } finally {
         setLoading(false);
@@ -145,62 +131,49 @@ export default function BookDetailPopup({
     fetchLanguages();
   }, [visible, bookId]);
 
-  // ============================
-  // 🔁 Reload when change language
-  // ============================
   useEffect(() => {
     if (selectedLanguage && bookId) {
       fetchBookByLanguage(selectedLanguage);
     }
   }, [selectedLanguage]);
 
-  // ============================
-  // 📖 Read Book
-  // ============================
-  const handleRead = () => {
-    if (!book?.book_uuid || !selectedLanguage) {
-      Alert.alert("Lỗi", "Không đủ thông tin để đọc sách.");
-      return;
-    }
-    const url = `${SITE_URL}/read/${book.book_uuid}?language=${selectedLanguage}`;
-    Linking.openURL(url).catch(() =>
-      Alert.alert("Lỗi", "Không thể mở trang đọc.")
-    );
-  };
+const handleRead = () => {
+  router.push({
+    pathname: `/read/${book.book_uuid}`,
+    params: { bookLang: selectedLanguage }
+  });
+};
 
-  // ============================
-  // ⬇ Download EPUB
-  // ============================
+  // ✅ FIX: ưu tiên PDF, fallback sang EPUB — không đổi UI
   const handleDownload = async () => {
     if (!book?.book_uuid || !selectedLanguage) {
       Alert.alert("Lỗi", "Thiếu thông tin sách hoặc ngôn ngữ.");
       return;
     }
+
     try {
       const langIdNum = Number(selectedLanguage);
       const { data: content, error } = await supabase
         .from("book_content")
-        .select("epub_url")
+        .select("pdf_url, epub_url")
         .eq("book_id", book.book_uuid)
         .eq("language_id", langIdNum)
         .maybeSingle();
 
       if (error) throw error;
-      if (content?.epub_url) Linking.openURL(content.epub_url);
-      else Alert.alert("Không tìm thấy file EPUB");
+
+      if (content?.pdf_url) return Linking.openURL(content.pdf_url);
+      if (content?.epub_url) return Linking.openURL(content.epub_url);
+
+      Alert.alert("Không tìm thấy file PDF/EPUB nào");
     } catch (err) {
-      console.error("handleDownload error:", err);
-      Alert.alert("Lỗi tải xuống", "Không thể lấy link EPUB.");
+      Alert.alert("Lỗi tải xuống", "Không thể lấy link file.");
     }
   };
 
-  // ============================
-  // ❤️ Add to Favorite
-  // ============================
-  const handleAddFavorite = async () => {
-    if (!book) return Alert.alert("Lỗi", "Không có thông tin sách để thêm.");
+  const handleAddFavorite = () => {
+    if (!book) return;
     Alert.alert("⭐ Thêm yêu thích", `"${book.title}" đã được thêm vào danh sách!`);
-    // 👉 Ở đây bạn có thể insert vào bảng favorites nếu muốn
   };
 
   if (!visible || !bookId) return null;
@@ -258,7 +231,6 @@ export default function BookDetailPopup({
                       </Picker>
                     </View>
 
-                    {/* ❤️ Add to Favorite */}
                     <TouchableOpacity
                       style={styles.favoriteButton}
                       onPress={handleAddFavorite}
@@ -295,7 +267,7 @@ export default function BookDetailPopup({
                     <View style={styles.hr} />
                     <InfoItem label="Country" value={displayBook.country_of_origin} />
                     <View style={styles.hr} />
-                    <InfoItem label="Original URL" value={'Letsreadasia.org'} />
+                    <InfoItem label="Original URL" value={"Letsreadasia.org"} />
                     <View style={styles.hr} />
                     <InfoItem label="License" value={displayBook.license} />
                     <View style={styles.hr} />
@@ -310,7 +282,6 @@ export default function BookDetailPopup({
             </View>
           </TouchableWithoutFeedback>
         </View>
-        
       </TouchableWithoutFeedback>
     </Modal>
   );

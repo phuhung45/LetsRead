@@ -9,7 +9,8 @@ import {
   TouchableOpacity,
   ScrollView,
   Switch,
-  Alert,
+  Modal,
+  Pressable,
 } from "react-native";
 import { supabase } from "../lib/supabase";
 import { useLocalSearchParams, router } from "expo-router";
@@ -34,11 +35,13 @@ export default function ReadBookScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [darkMode, setDarkMode] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [epubUrl, setEpubUrl] = useState<string | null>(null);
   const [bookTitle, setBookTitle] = useState<string>("");
+  const [showDownloadPopup, setShowDownloadPopup] = useState(false);
 
   const swiperRef = useRef<any>(null);
 
-  // 🔹 Fetch dữ liệu chính
+  // 🔹 Fetch dữ liệu
   useEffect(() => {
     if (!cleanBookUuid) {
       setLoading(false);
@@ -46,33 +49,39 @@ export default function ReadBookScreen() {
     }
 
     const fetchBookData = async () => {
-      // ✅ Lấy bản ghi đúng ngôn ngữ
+      setLoading(true);
+
+      // Lấy thông tin sách (theo ngôn ngữ)
       const { data: bookInfoData, error: bookInfoError } = await supabase
         .from("book_content")
-        .select("pdf_url, title, language_id")
+        .select("pdf_url, epub_url, title")
         .eq("book_id", cleanBookUuid)
         .eq("language_id", selectedLang)
+        .limit(1)
         .maybeSingle();
 
       if (bookInfoError)
         console.error("❌ Book info fetch error:", bookInfoError);
 
-      if (bookInfoData) {
-        setPdfUrl(bookInfoData.pdf_url || null);
-        setBookTitle(bookInfoData.title || "");
-      } else {
-        // fallback: nếu không có đúng lang
+      // Nếu không có bản dịch theo ngôn ngữ → fallback sang ngôn ngữ mặc định
+      if (!bookInfoData) {
         const { data: fallbackBook } = await supabase
           .from("book_content")
-          .select("pdf_url, title")
+          .select("pdf_url, epub_url, title")
           .eq("book_id", cleanBookUuid)
           .limit(1)
           .maybeSingle();
+
         setPdfUrl(fallbackBook?.pdf_url || null);
-        setBookTitle(fallbackBook?.title || "");
+        setEpubUrl(fallbackBook?.epub_url || null);
+        setBookTitle(fallbackBook?.title || "Untitled");
+      } else {
+        setPdfUrl(bookInfoData.pdf_url || null);
+        setEpubUrl(bookInfoData.epub_url || null);
+        setBookTitle(bookInfoData.title || "Untitled");
       }
 
-      // 🔹 Lấy pages theo ngôn ngữ
+      // Lấy các trang
       let { data, error } = await supabase
         .from("book_content_page")
         .select("book_uuid, language_id, page, image, content_value")
@@ -82,7 +91,6 @@ export default function ReadBookScreen() {
 
       if (error) console.error("❌ Supabase error:", error);
 
-      // fallback nếu trống
       if (!data || data.length === 0) {
         const { data: fallbackData } = await supabase
           .from("book_content_page")
@@ -98,11 +106,15 @@ export default function ReadBookScreen() {
     };
 
     const fetchLanguages = async () => {
-      // 🔹 Lấy danh sách language có trong book
       const { data, error } = await supabase
         .from("book_content_page")
         .select("language_id")
         .eq("book_uuid", cleanBookUuid);
+
+      if (error) {
+        console.error("❌ Language fetch error:", error);
+        return;
+      }
 
       const uniqueIds = Array.from(new Set(data?.map((d) => d.language_id)));
       if (uniqueIds.length > 0) {
@@ -119,7 +131,6 @@ export default function ReadBookScreen() {
     fetchBookData();
   }, [cleanBookUuid, selectedLang]);
 
-  // 🔹 Xử lý HTML → text thuần
   const cleanHTML = (html: string) =>
     decode(
       html
@@ -145,19 +156,29 @@ export default function ReadBookScreen() {
     }
   };
 
-  const handleDownload = async () => {
-    if (!pdfUrl) {
-      Alert.alert("No PDF available for this book.");
-      return;
+  // 🔹 Popup download
+  const openDownloadPopup = () => {
+    if (!pdfUrl && !epubUrl) return;
+    setShowDownloadPopup(true);
+  };
+
+  // 🔹 Download file
+  const handleDownload = async (type: "pdf" | "epub") => {
+    setShowDownloadPopup(false);
+    const fileUrl = type === "pdf" ? pdfUrl : epubUrl;
+    if (!fileUrl) return;
+    try {
+      Linking.openURL(fileUrl);
+    } catch (err) {
+      console.error("❌ Download error:", err);
     }
-    Linking.openURL(pdfUrl);
   };
 
   if (loading)
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         <ActivityIndicator size="large" />
-        <Text>Loading book pages...</Text>
+        <Text>Loading book...</Text>
       </View>
     );
 
@@ -173,30 +194,29 @@ export default function ReadBookScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor }}>
-      {/* 🔹 Header */}
+      {/* Header */}
       <View
         style={{
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          paddingHorizontal: 10,
+          paddingLeft: "15%",
+          paddingRight: "15%",
           paddingVertical: 10,
           backgroundColor: darkMode ? "#222" : "#f0f0f0",
         }}
       >
-        {/* 🔙 Back + Title bên trái */}
-        <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+        {/* Back + Title */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <TouchableOpacity onPress={() => router.replace("/")}>
             <Ionicons name="arrow-back" size={26} color={textColor} />
           </TouchableOpacity>
-
           <Text
             numberOfLines={1}
             style={{
               color: textColor,
               fontSize: 18,
               fontWeight: "600",
-              marginLeft: 10,
               maxWidth: width * 0.4,
             }}
           >
@@ -204,49 +224,49 @@ export default function ReadBookScreen() {
           </Text>
         </View>
 
-        {/* 🌐 Picker Language ở giữa */}
+        {/* Picker */}
         <View style={{ flex: 1, alignItems: "center" }}>
-          <Picker
-            selectedValue={selectedLang}
+          <View
             style={{
+              borderWidth: 1,
+              borderColor: "#ccc",
+              borderRadius: 8,
               width: 160,
-              height: 38,
-              color: textColor,
+              overflow: "hidden",
+              backgroundColor: darkMode ? "#333" : "#fff",
             }}
-            onValueChange={(value) => setSelectedLang(value)}
           >
-            {languages.map((lang) => (
-              <Picker.Item key={lang.id} label={lang.name} value={lang.id} />
-            ))}
-          </Picker>
+            <Picker
+              selectedValue={selectedLang}
+              style={{
+                width: "100%",
+                height: 38,
+                color: textColor,
+                textAlign: "center",
+              }}
+              onValueChange={(value) => setSelectedLang(value)}
+            >
+              {languages.map((lang) => (
+                <Picker.Item key={lang.id} label={lang.name} value={lang.id} />
+              ))}
+            </Picker>
+          </View>
         </View>
 
-        {/* 🌙 Dark mode + Download bên phải */}
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            flex: 1,
-            gap: 8,
-          }}
-        >
+        {/* Dark mode & Download */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8}}>
           <Switch value={darkMode} onValueChange={setDarkMode} />
-          <TouchableOpacity onPress={handleDownload}>
-            <Ionicons name="download-outline" size={24} color={textColor} />
+          <TouchableOpacity onPress={openDownloadPopup}>
+            <Text style={{ fontSize: 20, color: "green" }}>Download ⬇️</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* 🔹 Swiper nội dung */}
+      {/* Swiper nội dung */}
       <SwiperFlatList
         ref={swiperRef}
         showPagination
-        paginationStyleItemInactive={{
-          width: 8,
-          height: 8,
-          opacity: 0.3,
-        }}
+        paginationStyleItemInactive={{ width: 8, height: 8, opacity: 0.3 }}
         paginationStyleItemActive={{ opacity: 1 }}
         onChangeIndex={({ index }) => setCurrentIndex(index)}
       >
@@ -259,7 +279,7 @@ export default function ReadBookScreen() {
               padding: 20,
             }}
           >
-            {page.image ? (
+            {page.image && (
               <Image
                 source={{ uri: page.image }}
                 style={{
@@ -269,15 +289,14 @@ export default function ReadBookScreen() {
                   marginBottom: 20,
                 }}
               />
-            ) : null}
-
+            )}
             <Text
               style={{
                 fontSize: 22,
                 lineHeight: 28,
                 textAlign: "justify",
                 color: textColor,
-                paddingHorizontal: width * 0.32,
+                paddingHorizontal: width * 0.2,
               }}
             >
               {cleanHTML(page.content_value || "")}
@@ -286,60 +305,83 @@ export default function ReadBookScreen() {
         ))}
       </SwiperFlatList>
 
-      {/* 🔹 Nút chuyển trang */}
-      <View
-        style={{
-          position: "absolute",
-          top: "45%",
-          width: "100%",
-          flexDirection: "row",
-          justifyContent: "space-between",
-          paddingHorizontal: 10,
-        }}
+      {/* Popup Download */}
+      <Modal
+        visible={showDownloadPopup}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDownloadPopup(false)}
       >
-        <TouchableOpacity
-          onPress={goPrev}
-          disabled={currentIndex === 0}
+        <View
           style={{
+            flex: 1,
             backgroundColor: "rgba(0,0,0,0.4)",
-            paddingVertical: 10,
-            paddingHorizontal: 15,
-            borderRadius: 50,
+            justifyContent: "center",
+            alignItems: "center",
           }}
         >
-          <Text style={{ color: "white", fontSize: 22 }}>‹</Text>
-        </TouchableOpacity>
+          <View
+            style={{
+              backgroundColor: "white",
+              width: "60%",
+              borderRadius: 12,
+              paddingVertical: 20,
+              paddingHorizontal: 10,
+              elevation: 5,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 18,
+                fontWeight: "600",
+                textAlign: "center",
+                marginBottom: 15,
+              }}
+            >
+              Download Options
+            </Text>
 
-        <TouchableOpacity
-          onPress={goNext}
-          disabled={currentIndex === pages.length - 1}
-          style={{
-            backgroundColor: "rgba(0,0,0,0.4)",
-            paddingVertical: 10,
-            paddingHorizontal: 15,
-            borderRadius: 50,
-          }}
-        >
-          <Text style={{ color: "white", fontSize: 22 }}>›</Text>
-        </TouchableOpacity>
-      </View>
+            {pdfUrl && (
+              <Pressable
+                onPress={() => handleDownload("pdf")}
+                style={{
+                  paddingVertical: 12,
+                  borderBottomWidth: 1,
+                  borderBottomColor: "#ddd",
+                }}
+              >
+                <Text style={{ fontSize: 16, textAlign: "center" }}>
+                  📄 Download PDF
+                </Text>
+              </Pressable>
+            )}
 
-      {/* 🔹 Hiển thị số trang */}
-      <View
-        style={{
-          position: "absolute",
-          bottom: 20,
-          alignSelf: "center",
-          backgroundColor: "rgba(0,0,0,0.3)",
-          paddingHorizontal: 15,
-          paddingVertical: 5,
-          borderRadius: 20,
-        }}
-      >
-        <Text style={{ color: "white" }}>
-          Page {currentIndex + 1} / {pages.length}
-        </Text>
-      </View>
+            {epubUrl && (
+              <Pressable
+                onPress={() => handleDownload("epub")}
+                style={{
+                  paddingVertical: 12,
+                  borderBottomWidth: 1,
+                  borderBottomColor: "#ddd",
+                }}
+              >
+                <Text style={{ fontSize: 16, textAlign: "center" }}>
+                  📘 Download EPUB
+                </Text>
+              </Pressable>
+            )}
+
+            <Pressable
+              onPress={() => setShowDownloadPopup(false)}
+              style={{ paddingVertical: 12 }}
+            >
+              <Text style={{ fontSize: 16, textAlign: "center", color: "red" }}>
+                Cancel
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

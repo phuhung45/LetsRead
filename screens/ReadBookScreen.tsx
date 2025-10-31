@@ -41,7 +41,7 @@ export default function ReadBookScreen() {
 
   const swiperRef = useRef<any>(null);
 
-  // 🔹 Fetch dữ liệu
+  // FETCH
   useEffect(() => {
     if (!cleanBookUuid) {
       setLoading(false);
@@ -51,8 +51,7 @@ export default function ReadBookScreen() {
     const fetchBookData = async () => {
       setLoading(true);
 
-      // Lấy thông tin sách (theo ngôn ngữ)
-      const { data: bookInfoData, error: bookInfoError } = await supabase
+      const { data: bookInfoData } = await supabase
         .from("book_content")
         .select("pdf_url, epub_url, title")
         .eq("book_id", cleanBookUuid)
@@ -60,10 +59,6 @@ export default function ReadBookScreen() {
         .limit(1)
         .maybeSingle();
 
-      if (bookInfoError)
-        console.error("❌ Book info fetch error:", bookInfoError);
-
-      // Nếu không có bản dịch theo ngôn ngữ → fallback sang ngôn ngữ mặc định
       if (!bookInfoData) {
         const { data: fallbackBook } = await supabase
           .from("book_content")
@@ -81,23 +76,21 @@ export default function ReadBookScreen() {
         setBookTitle(bookInfoData.title || "Untitled");
       }
 
-      // Lấy các trang
-      let { data, error } = await supabase
+      let { data } = await supabase
         .from("book_content_page")
         .select("book_uuid, language_id, page, image, content_value")
         .eq("book_uuid", cleanBookUuid)
         .eq("language_id", selectedLang)
-        .order("page", { ascending: true });
-
-      if (error) console.error("❌ Supabase error:", error);
+        .order("page");
 
       if (!data || data.length === 0) {
         const { data: fallbackData } = await supabase
           .from("book_content_page")
           .select("book_uuid, language_id, page, image, content_value")
           .eq("book_uuid", cleanBookUuid)
-          .order("page", { ascending: true })
+          .order("page")
           .limit(20);
+
         data = fallbackData || [];
       }
 
@@ -106,17 +99,13 @@ export default function ReadBookScreen() {
     };
 
     const fetchLanguages = async () => {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("book_content_page")
         .select("language_id")
         .eq("book_uuid", cleanBookUuid);
 
-      if (error) {
-        console.error("❌ Language fetch error:", error);
-        return;
-      }
-
       const uniqueIds = Array.from(new Set(data?.map((d) => d.language_id)));
+
       if (uniqueIds.length > 0) {
         const { data: langs } = await supabase
           .from("languages")
@@ -156,22 +145,15 @@ export default function ReadBookScreen() {
     }
   };
 
-  // 🔹 Popup download
   const openDownloadPopup = () => {
     if (!pdfUrl && !epubUrl) return;
     setShowDownloadPopup(true);
   };
 
-  // 🔹 Download file
   const handleDownload = async (type: "pdf" | "epub") => {
     setShowDownloadPopup(false);
     const fileUrl = type === "pdf" ? pdfUrl : epubUrl;
-    if (!fileUrl) return;
-    try {
-      Linking.openURL(fileUrl);
-    } catch (err) {
-      console.error("❌ Download error:", err);
-    }
+    if (fileUrl) Linking.openURL(fileUrl);
   };
 
   if (loading)
@@ -194,7 +176,7 @@ export default function ReadBookScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor }}>
-      {/* Header */}
+      {/* HEADER */}
       <View
         style={{
           flexDirection: "row",
@@ -242,7 +224,6 @@ export default function ReadBookScreen() {
                 width: "100%",
                 height: 38,
                 color: textColor,
-                textAlign: "center",
               }}
               onValueChange={(value) => setSelectedLang(value)}
             >
@@ -254,7 +235,7 @@ export default function ReadBookScreen() {
         </View>
 
         {/* Dark mode & Download */}
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8}}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Switch value={darkMode} onValueChange={setDarkMode} />
           <TouchableOpacity onPress={openDownloadPopup}>
             <Text style={{ fontSize: 20, color: "green" }}>Download ⬇️</Text>
@@ -262,7 +243,7 @@ export default function ReadBookScreen() {
         </View>
       </View>
 
-      {/* Swiper nội dung */}
+      {/* ✅ SWIPER */}
       <SwiperFlatList
         ref={swiperRef}
         showPagination
@@ -305,7 +286,47 @@ export default function ReadBookScreen() {
         ))}
       </SwiperFlatList>
 
-      {/* Popup Download */}
+      {/* ✅ PREV / NEXT */}
+      <View
+        style={{
+          position: "absolute",
+          top: "50%",
+          width: "100%",
+          flexDirection: "row",
+          justifyContent: "space-between",
+          paddingHorizontal: 20,
+        }}
+      >
+        <TouchableOpacity
+          onPress={goPrev}
+          disabled={currentIndex === 0}
+          style={{
+            backgroundColor: "rgba(0,0,0,0.5)",
+            paddingVertical: 10,
+            paddingHorizontal: 14,
+            borderRadius: 30,
+            opacity: currentIndex === 0 ? 0.2 : 1,
+          }}
+        >
+          <Ionicons name="chevron-back" size={28} color="#fff" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={goNext}
+          disabled={currentIndex === pages.length - 1}
+          style={{
+            backgroundColor: "rgba(0,0,0,0.5)",
+            paddingVertical: 10,
+            paddingHorizontal: 14,
+            borderRadius: 30,
+            opacity: currentIndex === pages.length - 1 ? 0.2 : 1,
+          }}
+        >
+          <Ionicons name="chevron-forward" size={28} color="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      {/* POPUP */}
       <Modal
         visible={showDownloadPopup}
         transparent
@@ -375,7 +396,9 @@ export default function ReadBookScreen() {
               onPress={() => setShowDownloadPopup(false)}
               style={{ paddingVertical: 12 }}
             >
-              <Text style={{ fontSize: 16, textAlign: "center", color: "red" }}>
+              <Text
+                style={{ fontSize: 16, textAlign: "center", color: "red" }}
+              >
                 Cancel
               </Text>
             </Pressable>

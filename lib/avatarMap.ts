@@ -1,0 +1,17 @@
+export const avatarMap: any = {
+  "/avatars/avatar1.png": require("../assets/images/avatar-bear.png"),
+  "/avatars/avatar2.png": require("../assets/images/avatar-bear2.png"),
+  "/avatars/avatar3.png": require("../assets/images/avatar-bird.png"),
+  "/avatars/avatar4.png": require("../assets/images/avatar-bird2.png"),
+  "/avatars/avatar5.png": require("../assets/images/avatar-buffalo.png"),
+  "/avatars/avatar6.png": require("../assets/images/avatar-butterfly.png"),
+  "/avatars/avatar7.png": require("../assets/images/avatar-cat.png"),
+  "/avatars/avatar8.png": require("../assets/images/avatar-cat2.png"),
+  "/avatars/avatar9.png": require("../assets/images/avatar-dragon.png"),
+  "/avatars/avatar10.png": require("../assets/images/avatar-elephant.png"),
+  "/avatars/avatar11.png": require("../assets/images/avatar-lazy.png"),
+  "/avatars/avatar12.png": require("../assets/images/avatar-monkey.png"),
+  "/avatars/avatar13.png": require("../assets/images/avatar-monkey2.png"),
+  "/avatars/avatar14.png": require("../assets/images/avatar-tiger.png"),
+  "/avatars/avatar15.png": require("../assets/images/avatar-turtle.png"),
+};

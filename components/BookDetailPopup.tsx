@@ -130,14 +130,19 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
     }
   }, [selectedLanguage]);
 
+  // ✅ Fix: checkFavorite có user_id và không lỗi trùng
   useEffect(() => {
     const checkFavorite = async () => {
-      if (!bookId) return;
+      const { data: user } = await supabase.auth.getUser();
+      const userId = user?.user?.id;
+      if (!userId || !bookId) return;
+
       const { data, error } = await supabase
         .from("user_favorites")
         .select("id")
         .eq("book_id", bookId)
-        .single();
+        .eq("user_id", userId)
+        .maybeSingle();
 
       if (!error && data) setIsFavorite(true);
       else setIsFavorite(false);
@@ -145,24 +150,45 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
     checkFavorite();
   }, [bookId]);
 
+  // ✅ Fix: handleAddFavorite có user_id và kiểm tra trùng
   const handleAddFavorite = async () => {
+    const { data: user } = await supabase.auth.getUser();
+    const userId = user?.user?.id;
+
+    if (!userId) {
+      Alert.alert("Thông báo", "Bạn cần đăng nhập để thêm yêu thích.");
+      return;
+    }
+
     if (!bookId) return;
+
     try {
       if (isFavorite) {
         const { error } = await supabase
           .from("user_favorites")
           .delete()
-          .eq("book_id", bookId);
+          .eq("book_id", bookId)
+          .eq("user_id", userId);
         if (error) throw error;
         setIsFavorite(false);
       } else {
-        const { error } = await supabase.from("user_favorites").insert([
-          {
-            book_id: bookId,
-            created_at: new Date().toISOString(),
-          },
-        ]);
-        if (error) throw error;
+        const { data: existing } = await supabase
+          .from("user_favorites")
+          .select("id")
+          .eq("book_id", bookId)
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (!existing) {
+          const { error } = await supabase.from("user_favorites").insert([
+            {
+              user_id: userId,
+              book_id: bookId,
+              created_at: new Date().toISOString(),
+            },
+          ]);
+          if (error) throw error;
+        }
         setIsFavorite(true);
       }
     } catch (err) {
@@ -293,7 +319,6 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
                     {displayBook.description || "Không có mô tả."}
                   </Text>
 
-                  {/* ✅ Added section like the screenshot */}
                   <View style={styles.statsContainer}>
                     <View style={styles.statBox}>
                       <Text style={styles.statLabel}>Reading Level</Text>
@@ -313,7 +338,6 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
                     </View>
                   </View>
 
-                  {/* --- Old details remain intact --- */}
                   <View style={styles.detailsContainer}>
                     <View style={styles.hr} />
                     <InfoItem label="Publisher" value={displayBook.publisher} />
@@ -476,8 +500,6 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     width: "100%",
   },
-
-  /* ✅ New styles for 3-box info section */
   statsContainer: {
     flexDirection: "row",
     justifyContent: "space-evenly",
@@ -496,7 +518,6 @@ const styles = StyleSheet.create({
   },
   statLabel: { fontSize: 12, color: "#777", marginBottom: 6 },
   statValue: { fontSize: 18, fontWeight: "bold", color: "#111" },
-
   detailsContainer: { width: "100%", paddingVertical: 8 },
   hr: { height: 1, backgroundColor: "#eee", marginVertical: 12 },
   infoRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8 },

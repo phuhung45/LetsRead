@@ -9,6 +9,7 @@ import {
   useWindowDimensions,
   ScrollView,
   Platform,
+  TouchableOpacity,
 } from "react-native";
 import { supabase } from "../../lib/supabase";
 import * as Progress from "react-native-progress";
@@ -17,10 +18,14 @@ import HeaderMobile from "../../components/HeaderMobile";
 import HeaderDesktop from "../../components/HeaderDesktop";
 import FooterMobile from "../../components/FooterMobile";
 import FooterDesktop from "../../components/FooterDesktop";
+import BookDetailPopup from "../../components/BookDetailPopup"; // ✅ thêm dòng này
 
 export default function AllBooks() {
   const [books, setBooks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedBook, setSelectedBook] = useState<any>(null); // ✅ book đang chọn
+  const [popupVisible, setPopupVisible] = useState(false); // ✅ popup hiển thị
+
   const { width } = useWindowDimensions();
   const isWeb = Platform.OS === "web";
   const isMobile = !isWeb;
@@ -45,11 +50,10 @@ export default function AllBooks() {
 
   const numColumns = isMobile ? 3 : width < 1024 ? 4 : 6;
 
-  // ✅ Sử dụng padding theo phần trăm bằng width thực tế
   const getGridStyle = () => {
     if (isWeb) {
       return {
-        paddingHorizontal: width * 0.15, // tương đương 15%
+        paddingHorizontal: width * 0.15,
         justifyContent: "center" as const,
         paddingBottom: 80,
         paddingTop: 20,
@@ -78,8 +82,12 @@ export default function AllBooks() {
     }
   };
 
-  // ✅ Xử lý khoảng cách giữa các thẻ bằng columnWrapperStyle và margin
   const cardMargin = isWeb ? 25 : 5;
+
+  const handlePressBook = (book: any) => {
+    setSelectedBook(book);
+    setPopupVisible(true);
+  };
 
   return (
     <View style={styles.container}>
@@ -94,10 +102,14 @@ export default function AllBooks() {
           contentContainerStyle={getGridStyle()}
           columnWrapperStyle={{
             justifyContent: "center",
-            marginBottom: isWeb ? 50 : 10, // gap giữa hàng
+            marginBottom: isWeb ? 50 : 10,
           }}
           renderItem={({ item }) => (
-            <View style={[styles.card, { marginHorizontal: cardMargin }]}>
+            <TouchableOpacity
+              onPress={() => handlePressBook(item)}
+              activeOpacity={0.8}
+              style={[styles.card, { marginHorizontal: cardMargin }]}
+            >
               <Image
                 source={{ uri: item.books?.cover_image }}
                 style={getCoverStyle()}
@@ -122,12 +134,21 @@ export default function AllBooks() {
                   ✅ Done
                 </Text>
               )}
-            </View>
+            </TouchableOpacity>
           )}
         />
       </ScrollView>
 
       {isMobile ? <FooterMobile /> : <FooterDesktop />}
+
+      {/* ✅ Popup chi tiết sách */}
+      {selectedBook && (
+        <BookDetailPopup
+          visible={popupVisible}
+          bookId={selectedBook.books?.id}
+          onClose={() => setPopupVisible(false)}
+        />
+      )}
     </View>
   );
 }

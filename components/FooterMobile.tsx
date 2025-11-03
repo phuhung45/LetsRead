@@ -52,7 +52,7 @@ export default function FooterMobile({ showUsername = false, username = "" }) {
         <Button
           route="/books"
           icon={Platform.OS === "ios" ? "book-outline" : "book-outline"}
-          label="Books"
+          label="My Books"
         />
         <Button
           route="/profile"

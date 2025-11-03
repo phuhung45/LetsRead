@@ -75,7 +75,7 @@ export default function HeaderDesktop() {
           }}
         >
           <Ionicons name="book-outline" size={20} color="green" />
-          <Text style={styles.navText}>Books</Text>
+          <Text style={styles.navText}>My Books</Text>
         </TouchableOpacity>
 
         <TouchableOpacity

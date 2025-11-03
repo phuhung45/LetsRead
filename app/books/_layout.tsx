@@ -6,6 +6,7 @@ export default function BooksLayout() {
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: "#2B7AFA",
+         headerShown: false,
         tabBarStyle: { paddingBottom: 6, height: 60 },
       }}
     >

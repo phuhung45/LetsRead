@@ -8,6 +8,7 @@ import {
   StyleSheet,
   useWindowDimensions,
   ScrollView,
+  TouchableOpacity,
 } from "react-native";
 import { supabase } from "../../lib/supabase";
 
@@ -17,9 +18,15 @@ import HeaderDesktop from "../../components/HeaderDesktop";
 import FooterMobile from "../../components/FooterMobile";
 import FooterDesktop from "../../components/FooterDesktop";
 
+// ✅ Import popup
+import BookDetailPopup from "../../components/BookDetailPopup";
+
 export default function ReadedBooks() {
   const [books, setBooks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [popupVisible, setPopupVisible] = useState(false);
+  const [selectedBookId, setSelectedBookId] = useState<string | undefined>();
+
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -54,15 +61,20 @@ export default function ReadedBooks() {
         <FlatList
           scrollEnabled={false}
           contentContainerStyle={
-            isMobile
-              ? styles.gridMobile
-              : styles.gridDesktop
+            isMobile ? styles.gridMobile : styles.gridDesktop
           }
           numColumns={numColumns}
           data={books}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
-            <View style={styles.card}>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectedBookId(item.books?.id);
+                setPopupVisible(true);
+              }}
+              activeOpacity={0.7}
+              style={styles.card}
+            >
               <Image
                 source={{ uri: item.books?.cover_image }}
                 style={[
@@ -75,13 +87,20 @@ export default function ReadedBooks() {
                 {item.books?.title}
               </Text>
               <Text style={{ color: "green", fontSize: 12 }}>✅ Done</Text>
-            </View>
+            </TouchableOpacity>
           )}
         />
       </ScrollView>
 
       {/* Footer */}
       {isMobile ? <FooterMobile /> : <FooterDesktop />}
+
+      {/* ✅ Popup chi tiết sách */}
+      <BookDetailPopup
+        visible={popupVisible}
+        bookId={selectedBookId}
+        onClose={() => setPopupVisible(false)}
+      />
     </View>
   );
 }

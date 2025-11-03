@@ -8,6 +8,7 @@ import {
   StyleSheet,
   useWindowDimensions,
   ScrollView,
+  TouchableOpacity,
 } from "react-native";
 import { supabase } from "../../lib/supabase";
 
@@ -17,9 +18,17 @@ import HeaderDesktop from "../../components/HeaderDesktop";
 import FooterMobile from "../../components/FooterMobile";
 import FooterDesktop from "../../components/FooterDesktop";
 
+// ✅ Import popup
+import BookDetailPopup from "../../components/BookDetailPopup";
+
 export default function FavoriteBooks() {
   const [books, setBooks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // ✅ popup state (đúng với phiên bản popup hiện tại)
+  const [selectedBookId, setSelectedBookId] = useState<string | undefined>(undefined);
+  const [popupVisible, setPopupVisible] = useState(false);
+
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -27,16 +36,31 @@ export default function FavoriteBooks() {
     loadBooks();
   }, []);
 
-  async function loadBooks() {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("user_favorites")
-      .select("*, books(*)")
-      .order("created_at", { ascending: false });
-    if (error) console.error(error);
-    else setBooks(data || []);
+async function loadBooks() {
+  setLoading(true);
+
+  // ✅ lấy user hiện tại
+  const { data: user } = await supabase.auth.getUser();
+  const userId = user?.user?.id;
+
+  if (!userId) {
+    setBooks([]);
     setLoading(false);
+    return;
   }
+
+  const { data, error } = await supabase
+    .from("user_favorites")
+    .select("*, books(*)")
+    .eq("user_id", userId)          // ✅ lọc theo user hiện tại
+    .order("created_at", { ascending: false });
+
+  if (error) console.error(error);
+  else setBooks(data || []);
+
+  setLoading(false);
+}
+
 
   if (loading) return <ActivityIndicator style={{ marginTop: 50 }} />;
 
@@ -57,7 +81,14 @@ export default function FavoriteBooks() {
           data={books}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
-            <View style={styles.card}>
+            <TouchableOpacity
+              style={styles.card}
+              onPress={() => {
+                // ✅ lấy đúng field book_uuid để truyền sang popup
+                setSelectedBookId(item.books?.book_uuid);
+                setPopupVisible(true);
+              }}
+            >
               <Image
                 source={{ uri: item.books?.cover_image }}
                 style={[
@@ -70,10 +101,17 @@ export default function FavoriteBooks() {
                 {item.books?.title}
               </Text>
               <Text style={{ color: "red", fontSize: 12 }}>❤️ Favorite</Text>
-            </View>
+            </TouchableOpacity>
           )}
         />
       </ScrollView>
+
+      {/* ✅ Popup chi tiết (đúng props cũ) */}
+      <BookDetailPopup
+        visible={popupVisible}
+        onClose={() => setPopupVisible(false)}
+        bookId={selectedBookId}   // ✅ truyền bookId
+      />
 
       {/* ✅ Footer */}
       {isMobile ? <FooterMobile /> : <FooterDesktop />}
@@ -84,14 +122,12 @@ export default function FavoriteBooks() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
 
-  // Mobile layout
   gridMobile: {
     padding: 12,
     justifyContent: "center",
     gap: 10,
   },
 
-  // Desktop layout
   gridDesktop: {
     paddingTop: 20,
     paddingBottom: 60,

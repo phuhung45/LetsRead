@@ -1,3 +1,4 @@
+// app/profile/ProfileScreen.tsx
 import React, { useEffect, useState } from "react";
 import {
   View,
@@ -7,64 +8,112 @@ import {
   TouchableOpacity,
   Image,
   ScrollView,
+  Platform,
 } from "react-native";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "expo-router";
 
-// ✅ Import Header & Footer
 import HeaderDesktop from "../../components/HeaderDesktop";
 import FooterDesktop from "../../components/FooterDesktop";
+import HeaderMobile from "../../components/HeaderMobile";
+import FooterMobile from "../../components/FooterMobile";
 
 export default function ProfileScreen() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
+  const [keepReading, setKeepReading] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const isMobile = Platform.OS === "ios" || Platform.OS === "android";
 
   useEffect(() => {
     const fetchData = async () => {
-      setLoading(true);
+      try {
+        setLoading(true);
 
-      const { data: userData } = await supabase.auth.getUser();
-      const currentUser = userData?.user;
-      setUser(currentUser);
-
-      if (currentUser) {
+        // 🧠 Lấy user Supabase hiện tại
+        const { data: userData, error: userErr } = await supabase.auth.getUser();
+        if (userErr || !userData?.user) throw userErr;
+        const currentUser = userData.user;
+        setUser(currentUser);
         const userId = currentUser.id;
-        const today = new Date().toISOString().split("T")[0];
+        console.log("👤 Current user:", userId);
 
-        const { data: todayLogs } = await supabase
+        // ⏱ Tổng phút đọc hôm nay (nếu có bảng reading_logs)
+        const today = new Date().toISOString().split("T")[0];
+        const { data: todayLogs, error: readErr } = await supabase
           .from("reading_logs")
-          .select("minutes_read")
+          .select("minutes_read, created_at")
           .eq("user_id", userId)
-          .gte("date", today);
+          .gte("created_at", `${today}T00:00:00Z`);
+
+        if (readErr) console.error("❌ reading_logs error:", readErr);
 
         const todayMinutes =
-          todayLogs?.reduce((a, x) => a + x.minutes_read, 0) || 0;
+          todayLogs?.reduce((a, x) => a + (x.minutes_read || 0), 0) || 0;
 
-        const { count: totalBooks } = await supabase
-          .from("books_read")
-          .select("*", { count: "exact", head: true })
-          .eq("user_id", userId);
+        // 📚 Tổng số sách đã đọc (progress = 1)
+        const { data: booksRead, error: totalErr } = await supabase
+          .from("user_reads")
+          .select("id")
+          .eq("user_id", userId)
+          .eq("progress", 1);
 
-        const { data: catData } = await supabase.rpc(
+        if (totalErr) console.error("❌ user_reads total error:", totalErr);
+        const totalBooks = booksRead?.length || 0;
+
+        // 🏆 Top 3 thể loại người dùng đọc nhiều nhất
+        const { data: topCategoriesData, error: catErr } = await supabase.rpc(
           "get_user_top_categories",
           { uid: userId }
         );
+        if (catErr) console.error("❌ get_user_top_categories error:", catErr);
 
+        const topCategories =
+          topCategoriesData?.length > 0
+            ? topCategoriesData.map((c: any) => ({
+                name: c.name,
+                icon_url:
+                  c.icon_url ||
+                  "https://cdn-icons-png.flaticon.com/512/2991/2991148.png",
+              }))
+            : [];
+
+        // 📖 Keep Reading — sách đang đọc dở (progress < 1)
+        const { data: progressRows, error: keepErr } = await supabase
+          .from("user_reads")
+          .select("book_id, progress, books:book_id (id, title, cover_image)")
+          .eq("user_id", userId)
+          .lt("progress", 1)
+          .limit(3);
+
+        if (keepErr) console.error("❌ user_reads keepErr:", keepErr);
+
+        const keepBooks =
+          progressRows?.map((r) => r.books).filter(Boolean) || [];
+
+        // ✅ Lưu state
         setStats({
           todayMinutes,
           goal: 20,
-          totalBooks: totalBooks || 0,
-          topCategories: catData || [],
+          totalBooks,
+          topCategories,
         });
+        setKeepReading(keepBooks);
+      } catch (err) {
+        console.error("❌ Error loading profile data:", err);
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     };
 
     fetchData();
   }, []);
+
+  const handleNavigate = (route: "home" | "library" | "profile") => {
+    if (route === "home") router.push("/");
+    else router.push(`/${route}`);
+  };
 
   if (loading)
     return (
@@ -87,78 +136,148 @@ export default function ProfileScreen() {
     );
 
   const { todayMinutes, goal, totalBooks, topCategories } = stats || {};
-
   const avatarUrl =
-    user.user_metadata?.avatar_url ||
-    "https://cdn-icons-png.flaticon.com/512/149/149071.png";
+    user?.user_metadata?.avatar_url ||
+    "https://cdn-icons-png.flaticon.com/512/1048/1048942.png";
 
   return (
-    <View style={{ flex: 1 }}>
-      {/* ✅ Render Header */}
-      <HeaderDesktop />
+    <View style={{ flex: 1, backgroundColor: "#fff" }}>
+      {isMobile ? <HeaderMobile /> : <HeaderDesktop />}
 
       <ScrollView contentContainerStyle={styles.container}>
+        <Text style={styles.welcome}>
+          Welcome {user?.user_metadata?.display_name || user?.email}
+        </Text>
+        <TouchableOpacity style={styles.switchProfile}>
+          <Text style={{ color: "green", fontWeight: "600" }}>
+            Switch your profile
+          </Text>
+        </TouchableOpacity>
+
         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
 
-        <Text style={styles.name}>
-          {user.user_metadata?.display_name || user.email}
-        </Text>
-        <Text style={styles.subtitle}>{user.email}</Text>
-
-        <View style={{ marginTop: 20 }}>
-          <Text style={styles.header}>Today's Reading</Text>
-          <Text style={styles.statValue}>{todayMinutes} min</Text>
-          <Text style={styles.subText}>Goal: {goal} min a day →</Text>
-
-          <View style={{ marginTop: 20 }}>
-            <Text style={styles.header}>Total Books Read</Text>
-            <Text style={styles.statValue}>{totalBooks}</Text>
-          </View>
-
-          <View style={{ marginTop: 20, alignItems: "center" }}>
-            <Text style={styles.header}>Your Top 3 Categories</Text>
-            {topCategories?.length > 0 ? (
-              topCategories.map((c: any, idx: number) => (
-                <Text key={idx} style={styles.category}>
-                  {idx + 1}. {c.name} ({c.count})
-                </Text>
-              ))
-            ) : (
-              <Text style={styles.subText}>No data yet</Text>
-            )}
-          </View>
+        {/* ✅ Today's Reading */}
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Today's Reading</Text>
+          <Text style={styles.bigText}>{todayMinutes} min</Text>
+          <Text style={styles.subText}>
+            Goal:{" "}
+            <Text style={{ color: "green", fontWeight: "600" }}>
+              {goal} min a day
+            </Text>
+          </Text>
         </View>
 
-        <TouchableOpacity
-          style={[styles.button, { marginTop: 30 }]}
-          onPress={() => router.push("/profile/settings")}
-        >
-          <Text style={styles.buttonText}>Account Settings ⚙️</Text>
-        </TouchableOpacity>
+        {/* ✅ Total Books */}
+        <Text style={[styles.sectionTitle, { marginTop: 30 }]}>
+          Total Books Read
+        </Text>
+        <Text style={styles.bigText}>{totalBooks}</Text>
+
+        {/* ✅ Top 3 Categories */}
+        <Text style={[styles.sectionTitle, { marginTop: 30 }]}>
+          Your Top 3 Categories
+        </Text>
+        <View style={styles.catRow}>
+          {topCategories?.length ? (
+            topCategories.slice(0, 3).map((c: any, i: number) => (
+              <View key={i} style={styles.catBox}>
+                <Image source={{ uri: c.icon_url }} style={styles.catIcon} />
+                <Text style={styles.catText}>{c.name}</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.subText}>No categories yet</Text>
+          )}
+        </View>
+
+        {/* ✅ Keep Reading */}
+        <Text style={[styles.sectionTitle, { marginTop: 30 }]}>
+          Keep Reading
+        </Text>
+        <View style={styles.bookRow}>
+          {keepReading?.length ? (
+            keepReading.map((b, i) => (
+              <TouchableOpacity
+                key={i}
+                style={styles.bookCard}
+                onPress={() => router.push(`/read/${b.id}`)}
+              >
+                <Image
+                  source={{ uri: b.cover_image }}
+                  style={styles.bookCover}
+                />
+                <Text style={styles.bookTitle} numberOfLines={2}>
+                  {b.title}
+                </Text>
+              </TouchableOpacity>
+            ))
+          ) : (
+            <Text style={styles.subText}>No books in progress</Text>
+          )}
+        </View>
       </ScrollView>
 
-      {/* ✅ Render Footer */}
-      <FooterDesktop />
+      {isMobile ? (
+        <FooterMobile
+          active="profile"
+          onNavigate={handleNavigate}
+          showUsername
+          username={user.email}
+        />
+      ) : (
+        <FooterDesktop />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flexGrow: 1, alignItems: "center", backgroundColor: "#fff", padding: 20 },
+  container: {
+    flexGrow: 1,
+    alignItems: "center",
+    padding: 20,
+  },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
-  avatar: { width: 120, height: 120, borderRadius: 60, marginTop: 40 },
-  name: { fontSize: 22, fontWeight: "bold", color: "green", marginTop: 10 },
-  subtitle: { color: "gray", fontSize: 14, marginBottom: 20 },
-  header: { fontSize: 18, fontWeight: "bold", color: "green" },
-  statValue: { fontSize: 26, fontWeight: "bold", color: "#333", marginTop: 5 },
-  subText: { color: "gray", fontSize: 14, marginTop: 5 },
-  category: { fontSize: 16, color: "#333", marginTop: 4 },
+  welcome: { fontSize: 20, fontWeight: "600", marginTop: 20, color: "#222" },
+  switchProfile: {
+    marginTop: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: "green",
+    borderRadius: 8,
+  },
+  avatar: { width: 140, height: 140, resizeMode: "contain", marginTop: 20 },
+  card: { alignItems: "center", marginTop: 20 },
+  sectionTitle: { fontSize: 18, fontWeight: "600", color: "#222" },
+  bigText: {
+    fontSize: 30,
+    fontWeight: "700",
+    color: "green",
+    marginVertical: 5,
+  },
+  subText: { fontSize: 14, color: "gray" },
+  catRow: { flexDirection: "row", justifyContent: "center", marginTop: 12 },
+  catBox: {
+    alignItems: "center",
+    marginHorizontal: 10,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: "#f9f9f9",
+    elevation: 2,
+  },
+  catIcon: { width: 50, height: 50, marginBottom: 5 },
+  catText: { fontSize: 14, color: "#333" },
+  bookRow: { flexDirection: "row", justifyContent: "center", marginTop: 10 },
+  bookCard: { alignItems: "center", marginHorizontal: 10, width: 100 },
+  bookCover: { width: 100, height: 130, borderRadius: 8 },
+  bookTitle: { textAlign: "center", marginTop: 4, fontSize: 13, color: "#333" },
   button: {
     backgroundColor: "green",
     borderRadius: 8,
     paddingHorizontal: 25,
     paddingVertical: 10,
-    marginTop: 10,
   },
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   text: { color: "gray", fontSize: 16 },

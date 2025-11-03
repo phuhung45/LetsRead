@@ -41,7 +41,7 @@ export default function ReadBookScreen() {
 
   const swiperRef = useRef<any>(null);
 
-  // FETCH
+  // 🧩 FETCH BOOK + LANGUAGES
   useEffect(() => {
     if (!cleanBookUuid) {
       setLoading(false);
@@ -76,6 +76,7 @@ export default function ReadBookScreen() {
         setBookTitle(bookInfoData.title || "Untitled");
       }
 
+      // 🧠 Lấy danh sách trang
       let { data } = await supabase
         .from("book_content_page")
         .select("book_uuid, language_id, page, image, content_value")
@@ -120,6 +121,7 @@ export default function ReadBookScreen() {
     fetchBookData();
   }, [cleanBookUuid, selectedLang]);
 
+  // 🧹 Clean HTML
   const cleanHTML = (html: string) =>
     decode(
       html
@@ -131,13 +133,53 @@ export default function ReadBookScreen() {
         .trim()
     );
 
-  const goNext = () => {
-    if (currentIndex < pages.length - 1) {
-      swiperRef.current?.scrollToIndex({ index: currentIndex + 1 });
-      setCurrentIndex(currentIndex + 1);
+  // ✅ Ghi lại tiến độ đọc
+  const updateUserReadingProgress = async (progress: number) => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) return;
+
+      const { error } = await supabase.from("user_reads").upsert(
+        {
+          user_id: user.id,
+          book_id: cleanBookUuid,
+          progress,
+          last_read_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,book_id" }
+      );
+
+      if (error) console.log("❌ upsert user_reads error:", error);
+      else console.log("✅ Updated progress:", progress);
+    } catch (e) {
+      console.log("reading progress error:", e);
     }
   };
 
+  // ✅ Khi Next
+  const goNext = async () => {
+    if (currentIndex < pages.length - 1) {
+      const nextIndex = currentIndex + 1;
+      swiperRef.current?.scrollToIndex({ index: nextIndex });
+      setCurrentIndex(nextIndex);
+
+      // 🔹 Tính progress (0 → 1)
+      const progress =
+        nextIndex + 1 >= pages.length
+          ? 1
+          : (nextIndex + 1) / pages.length;
+
+      await updateUserReadingProgress(progress);
+    } else {
+      await updateUserReadingProgress(1);
+      console.log("🎉 Completed reading this book!");
+    }
+  };
+
+  // ⬅️ Prev
   const goPrev = () => {
     if (currentIndex > 0) {
       swiperRef.current?.scrollToIndex({ index: currentIndex - 1 });
@@ -145,6 +187,7 @@ export default function ReadBookScreen() {
     }
   };
 
+  // 📥 Popup download
   const openDownloadPopup = () => {
     if (!pdfUrl && !epubUrl) return;
     setShowDownloadPopup(true);
@@ -220,11 +263,7 @@ export default function ReadBookScreen() {
           >
             <Picker
               selectedValue={selectedLang}
-              style={{
-                width: "100%",
-                height: 38,
-                color: textColor,
-              }}
+              style={{ width: "100%", height: 38, color: textColor }}
               onValueChange={(value) => setSelectedLang(value)}
             >
               {languages.map((lang) => (

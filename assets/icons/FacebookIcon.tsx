@@ -1,9 +1,18 @@
 import * as React from "react";
 import Svg, { Path } from "react-native-svg";
 
-export default function FacebookIcon({ size = 24, color = "blue" }) {
+export default function FacebookIcon({ size = 24, color = "black" }) {
   return (
-    <svg viewBox="64 64 896 896" focusable="false" data-icon="facebook" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M880 112H144c-17.7 0-32 14.3-32 32v736c0 17.7 14.3 32 32 32h736c17.7 0 32-14.3 32-32V144c0-17.7-14.3-32-32-32zm-92.4 233.5h-63.9c-50.1 0-59.8 23.8-59.8 58.8v77.1h119.6l-15.6 120.7h-104V912H539.2V602.2H434.9V481.4h104.3v-89c0-103.3 63.1-159.6 155.3-159.6 44.2 0 82.1 3.3 93.2 4.8v107.9z"></path>
-    </svg>
-    );
+    <Svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+    >
+      <Path
+        d="M12 2.04C6.48 2.04 2 6.52 2 12.04C2 17.06 5.66 21.17 10.44 21.95V14.89H7.9V12.04H10.44V9.79C10.44 7.27 11.93 5.89 14.21 5.89C15.3 5.89 16.45 6.09 16.45 6.09V8.55H15.19C13.95 8.55 13.56 9.32 13.56 10.11V12.04H16.33L15.89 14.89H13.56V21.95C18.34 21.17 22 17.06 22 12.04C22 6.52 17.52 2.04 12 2.04Z"
+        fill={color}
+      />
+    </Svg>
+  );
 }

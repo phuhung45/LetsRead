@@ -27,88 +27,86 @@ export default function ProfileScreen() {
   const isMobile = Platform.OS === "ios" || Platform.OS === "android";
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
+  const fetchData = async () => {
+    try {
+      setLoading(true);
 
-        // 🧠 Lấy user Supabase hiện tại
-        const { data: userData, error: userErr } = await supabase.auth.getUser();
-        if (userErr || !userData?.user) throw userErr;
-        const currentUser = userData.user;
-        setUser(currentUser);
-        const userId = currentUser.id;
-        console.log("👤 Current user:", userId);
-
-        // ⏱ Tổng phút đọc hôm nay (nếu có bảng reading_logs)
-        const today = new Date().toISOString().split("T")[0];
-        const { data: todayLogs, error: readErr } = await supabase
-          .from("reading_logs")
-          .select("minutes_read, created_at")
-          .eq("user_id", userId)
-          .gte("created_at", `${today}T00:00:00Z`);
-
-        if (readErr) console.error("❌ reading_logs error:", readErr);
-
-        const todayMinutes =
-          todayLogs?.reduce((a, x) => a + (x.minutes_read || 0), 0) || 0;
-
-        // 📚 Tổng số sách đã đọc (progress = 1)
-        const { data: booksRead, error: totalErr } = await supabase
-          .from("user_reads")
-          .select("id")
-          .eq("user_id", userId)
-          .eq("progress", 1);
-
-        if (totalErr) console.error("❌ user_reads total error:", totalErr);
-        const totalBooks = booksRead?.length || 0;
-
-        // 🏆 Top 3 thể loại người dùng đọc nhiều nhất
-        const { data: topCategoriesData, error: catErr } = await supabase.rpc(
-          "get_user_top_categories",
-          { uid: userId }
-        );
-        if (catErr) console.error("❌ get_user_top_categories error:", catErr);
-
-        const topCategories =
-          topCategoriesData?.length > 0
-            ? topCategoriesData.map((c: any) => ({
-                name: c.name,
-                icon_url:
-                  c.icon_url ||
-                  "https://cdn-icons-png.flaticon.com/512/2991/2991148.png",
-              }))
-            : [];
-
-        // 📖 Keep Reading — sách đang đọc dở (progress < 1)
-        const { data: progressRows, error: keepErr } = await supabase
-          .from("user_reads")
-          .select("book_id, progress, books:book_id (id, title, cover_image)")
-          .eq("user_id", userId)
-          .lt("progress", 1)
-          .limit(3);
-
-        if (keepErr) console.error("❌ user_reads keepErr:", keepErr);
-
-        const keepBooks =
-          progressRows?.map((r) => r.books).filter(Boolean) || [];
-
-        // ✅ Lưu state
-        setStats({
-          todayMinutes,
-          goal: 20,
-          totalBooks,
-          topCategories,
-        });
-        setKeepReading(keepBooks);
-      } catch (err) {
-        console.error("❌ Error loading profile data:", err);
-      } finally {
+      // ✅ Lấy session trước
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !sessionData?.session) {
+        console.warn("⚠️ No active session found:", sessionError);
+        setUser(null);
         setLoading(false);
+        return;
       }
-    };
 
-    fetchData();
-  }, []);
+      const currentUser = sessionData.session.user;
+      setUser(currentUser);
+      const userId = currentUser.id;
+      console.log("👤 Current user:", userId);
+
+      // ✅ Tiếp tục fetch dữ liệu profile
+      const today = new Date().toISOString().split("T")[0];
+
+      const { data: todayLogs, error: readErr } = await supabase
+        .from("reading_logs")
+        .select("minutes_read, created_at")
+        .eq("user_id", userId)
+        .gte("created_at", `${today}T00:00:00Z`);
+      if (readErr) console.error("❌ reading_logs error:", readErr);
+
+      const todayMinutes = todayLogs?.reduce((a, x) => a + (x.minutes_read || 0), 0) || 0;
+
+      const { data: booksRead, error: totalErr } = await supabase
+        .from("user_reads")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("progress", 1);
+      if (totalErr) console.error("❌ user_reads total error:", totalErr);
+
+      const totalBooks = booksRead?.length || 0;
+
+      const { data: topCategoriesData, error: catErr } = await supabase.rpc(
+        "get_user_top_categories",
+        { uid: userId }
+      );
+      if (catErr) console.error("❌ get_user_top_categories error:", catErr);
+
+      const topCategories =
+        topCategoriesData?.length > 0
+          ? topCategoriesData.map((c: any) => ({
+              name: c.name,
+              icon_url: c.icon_url || "https://cdn-icons-png.flaticon.com/512/2991/2991148.png",
+            }))
+          : [];
+
+      const { data: progressRows, error: keepErr } = await supabase
+        .from("user_reads")
+        .select("book_id, progress, books:book_id (id, title, cover_image)")
+        .eq("user_id", userId)
+        .lt("progress", 1)
+        .limit(3);
+      if (keepErr) console.error("❌ user_reads keepErr:", keepErr);
+
+      const keepBooks = progressRows?.map((r) => r.books).filter(Boolean) || [];
+
+      setStats({
+        todayMinutes,
+        goal: 20,
+        totalBooks,
+        topCategories,
+      });
+      setKeepReading(keepBooks);
+    } catch (err) {
+      console.error("❌ Error loading profile data:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  fetchData();
+}, []);
+
 
   const handleNavigate = (route: "home" | "library" | "profile") => {
     if (route === "home") router.push("/");
@@ -148,11 +146,15 @@ export default function ProfileScreen() {
         <Text style={styles.welcome}>
           Welcome {user?.user_metadata?.display_name || user?.email}
         </Text>
-        <TouchableOpacity style={styles.switchProfile}>
+        <TouchableOpacity
+          style={styles.switchProfile}
+          onPress={() => router.push("/profile/settings")} // ✅ thêm dòng này
+        >
           <Text style={{ color: "green", fontWeight: "600" }}>
             Switch your profile
           </Text>
         </TouchableOpacity>
+
 
         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
 

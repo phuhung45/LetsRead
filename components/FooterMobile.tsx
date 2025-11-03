@@ -1,32 +1,30 @@
+// components/FooterMobile.tsx
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter, usePathname } from "expo-router";
 
-type Props = {
-  active?: "home" | "library" | "profile";
-  onNavigate?: (route: "home" | "library" | "profile") => void;
-  showUsername?: boolean;
-  username?: string;
-};
+export default function FooterMobile({ showUsername = false, username = "" }) {
+  const router = useRouter();
+  const pathname = usePathname();
 
-export default function FooterMobile({
-  active = "home",
-  onNavigate = () => {},
-  showUsername = false,
-  username = "",
-}: Props) {
   const Button = ({
     route,
     icon,
+    label,
   }: {
-    route: "home" | "library" | "profile";
+    route: string;
     icon: string;
+    label: string;
   }) => {
-    const isActive = active === route;
+    const isActive =
+      (route === "/" && pathname === "/") ||
+      (route !== "/" && pathname.startsWith(route));
+
     return (
       <TouchableOpacity
         style={styles.buttonWrap}
-        onPress={() => onNavigate(route)}
+        onPress={() => router.push(route as any)}
         activeOpacity={0.7}
       >
         <View style={[styles.iconContainer, isActive && styles.activeIconContainer]}>
@@ -37,6 +35,7 @@ export default function FooterMobile({
           />
         </View>
         <Text style={[styles.label, isActive && styles.activeLabel]} numberOfLines={1}>
+          {label}
         </Text>
       </TouchableOpacity>
     );
@@ -45,9 +44,21 @@ export default function FooterMobile({
   return (
     <View style={styles.safeArea}>
       <View style={styles.container}>
-        <Button route="home" icon={Platform.OS === "ios" ? "home-outline" : "home-outline"}/>
-        <Button route="library" icon={Platform.OS === "ios" ? "book-outline" : "book-outline"}/>
-        <Button route="profile" icon={Platform.OS === "ios" ? "person-outline" : "person-outline"}/>
+        <Button
+          route="/"
+          icon={Platform.OS === "ios" ? "home-outline" : "home-outline"}
+          label="Home"
+        />
+        <Button
+          route="/books"
+          icon={Platform.OS === "ios" ? "book-outline" : "book-outline"}
+          label="Books"
+        />
+        <Button
+          route="/profile"
+          icon={Platform.OS === "ios" ? "person-outline" : "person-outline"}
+          label="Profile"
+        />
       </View>
       {showUsername && (
         <View style={styles.usernameRow}>
@@ -70,10 +81,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 14,
     flexDirection: "row",
-    paddingBottom: 0,
     alignItems: "center",
     justifyContent: "space-between",
-    // shadow
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.08,
@@ -92,7 +101,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   activeIconContainer: {
-    backgroundColor: "#10B981", // green-ish
+    backgroundColor: "#10B981",
     width: 44,
     height: 44,
     borderRadius: 14,

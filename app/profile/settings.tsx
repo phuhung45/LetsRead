@@ -7,12 +7,15 @@ import {
   StyleSheet,
   Image,
   ScrollView,
+  useWindowDimensions,
 } from "react-native";
 import { supabase } from "../../lib/supabase";
 import { router } from "expo-router";
 
 import HeaderDesktop from "../../components/HeaderDesktop";
+import HeaderMobile from "../../components/HeaderMobile";
 import FooterDesktop from "../../components/FooterDesktop";
+import FooterMobile from "../../components/FooterMobile";
 
 const avatarList = [
   "http://storage.googleapis.com/lets-read-asia/assets/images/adcfa051-9cfc-431c-8625-739ebc6eb316.png",
@@ -29,15 +32,19 @@ const avatarList = [
   "http://storage.googleapis.com/lets-read-asia/assets/images/51a1367d-d10b-451c-b033-dcdfad6d504d.png",
   "http://storage.googleapis.com/lets-read-asia/assets/images/6d340601-f9bf-4b3d-b8e7-6ad960531a45.png",
   "http://storage.googleapis.com/lets-read-asia/assets/images/f8db361a-eedd-4d24-93e9-2b53b228061b.png",
+  "http://storage.googleapis.com/lets-read-asia/assets/images/5bc71f3e-73c4-4838-9ada-d31e7d181c03.png",
 ];
 
 export default function SettingsScreen() {
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 1024;
+
   const [username, setUsername] = useState("");
   const [avatar, setAvatar] = useState(avatarList[0]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // ✅ Load username + avatar cũ
+  // ✅ Load user info
   useEffect(() => {
     const loadUser = async () => {
       const { data } = await supabase.auth.getUser();
@@ -55,6 +62,7 @@ export default function SettingsScreen() {
     loadUser();
   }, []);
 
+  // ✅ Update user info
   const handleUpdate = async () => {
     setLoading(true);
     setMessage("");
@@ -84,8 +92,8 @@ export default function SettingsScreen() {
   };
 
   return (
-    <View style={{ flex: 1 }}>
-      <HeaderDesktop />
+    <View style={{ flex: 1, backgroundColor: "#fff" }}>
+      {isDesktop ? <HeaderDesktop /> : <HeaderMobile />}
 
       <ScrollView contentContainerStyle={styles.container}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.push("/profile")}>
@@ -107,7 +115,17 @@ export default function SettingsScreen() {
 
         <Text style={{ marginBottom: 6, fontWeight: "500" }}>Chọn avatar:</Text>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View
+          style={[
+            styles.avatarGrid,
+            isDesktop
+              ? {
+                  paddingHorizontal: "15%",
+                  justifyContent: "space-between",
+                }
+              : { justifyContent: "center" },
+          ]}
+        >
           {avatarList.map((img, index) => (
             <TouchableOpacity
               key={index}
@@ -115,12 +133,13 @@ export default function SettingsScreen() {
               style={[
                 styles.avatarWrapper,
                 avatar === img && styles.avatarSelected,
+                isDesktop ? { width: "16%" } : { width: "30%" }, // ✅ web nhỏ hơn
               ]}
             >
               <Image source={{ uri: img }} style={styles.avatar} />
             </TouchableOpacity>
           ))}
-        </ScrollView>
+        </View>
 
         <TouchableOpacity
           style={[styles.button, loading && { opacity: 0.6 }]}
@@ -144,13 +163,13 @@ export default function SettingsScreen() {
         ) : null}
       </ScrollView>
 
-      <FooterDesktop />
+      {isDesktop ? <FooterDesktop /> : <FooterMobile />}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 20, backgroundColor: "#fff" },
+  container: { padding: 20 },
   backBtn: { marginBottom: 10 },
   backText: { fontSize: 16, color: "#007AFF" },
   title: { fontSize: 22, fontWeight: "bold", textAlign: "center", marginBottom: 20 },
@@ -176,16 +195,26 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
 
+  avatarGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 10,
+  },
   avatarWrapper: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    aspectRatio: 1,
+    borderRadius: 9999,
+    borderWidth: 2,
+    borderColor: "#eee",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
+    overflow: "hidden",
   },
-  avatarSelected: { borderWidth: 3, borderColor: "#007AFF" },
-  avatar: { width: 70, height: 70, borderRadius: 35 },
+  avatarSelected: {
+    borderColor: "#007AFF",
+    borderWidth: 3,
+  },
+  avatar: { width: "90%", height: "90%", borderRadius: 9999 },
 
   button: {
     backgroundColor: "#007AFF",

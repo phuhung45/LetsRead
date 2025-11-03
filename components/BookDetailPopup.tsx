@@ -15,13 +15,12 @@ import {
 import { Picker } from "@react-native-picker/picker";
 import { supabase } from "../lib/supabase";
 import { router } from "expo-router";
+
 interface Props {
   visible?: boolean;
   bookId: string | undefined;
   onClose: () => void;
 }
-
-const SITE_URL = "http://localhost:8081";
 
 const InfoItem = ({
   label,
@@ -36,17 +35,12 @@ const InfoItem = ({
   </View>
 );
 
-export default function BookDetailPopup({
-  visible = false,
-  bookId,
-  onClose,
-}: Props) {
+export default function BookDetailPopup({ visible = false, bookId, onClose }: Props) {
   const [book, setBook] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
-  const [languagesList, setLanguagesList] = useState<
-    { id: string; name: string }[]
-  >([]);
+  const [languagesList, setLanguagesList] = useState<{ id: string; name: string }[]>([]);
+  const [isFavorite, setIsFavorite] = useState(false);
 
   const fetchBookByLanguage = async (language_id: string) => {
     if (!bookId) return;
@@ -71,14 +65,12 @@ export default function BookDetailPopup({
         .eq("book_id", bookData.book_uuid);
 
       const catIds = catRel?.map((c: any) => c.category_id) ?? [];
-
       let categories: string[] = [];
       if (catIds.length > 0) {
         const { data: catNames } = await supabase
           .from("categories")
           .select("name")
           .in("id", catIds);
-
         categories = catNames?.map((c: any) => c.name) ?? [];
       }
 
@@ -95,6 +87,7 @@ export default function BookDetailPopup({
       setBook(null);
       setLanguagesList([]);
       setSelectedLanguage(null);
+      setIsFavorite(false);
       return;
     }
 
@@ -137,11 +130,49 @@ export default function BookDetailPopup({
     }
   }, [selectedLanguage]);
 
-const handleRead = () => {
-    if (!book || !selectedLanguage) return;
-    onClose?.(); // ✅ Đóng popup ngay
+  useEffect(() => {
+    const checkFavorite = async () => {
+      if (!bookId) return;
+      const { data, error } = await supabase
+        .from("user_favorites")
+        .select("id")
+        .eq("book_id", bookId)
+        .single();
 
-    // ⏳ Đợi popup ẩn rồi mới chuyển trang
+      if (!error && data) setIsFavorite(true);
+      else setIsFavorite(false);
+    };
+    checkFavorite();
+  }, [bookId]);
+
+  const handleAddFavorite = async () => {
+    if (!bookId) return;
+    try {
+      if (isFavorite) {
+        const { error } = await supabase
+          .from("user_favorites")
+          .delete()
+          .eq("book_id", bookId);
+        if (error) throw error;
+        setIsFavorite(false);
+      } else {
+        const { error } = await supabase.from("user_favorites").insert([
+          {
+            book_id: bookId,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+        if (error) throw error;
+        setIsFavorite(true);
+      }
+    } catch (err) {
+      Alert.alert("Lỗi", "Không thể cập nhật danh sách yêu thích.");
+    }
+  };
+
+  const handleRead = () => {
+    if (!book || !selectedLanguage) return;
+    onClose?.();
     setTimeout(() => {
       router.push({
         pathname: `/read/${book.book_uuid}`,
@@ -150,8 +181,6 @@ const handleRead = () => {
     }, 200);
   };
 
-
-  // ✅ FIX: ưu tiên PDF, fallback sang EPUB — không đổi UI
   const handleDownload = async () => {
     if (!book?.book_uuid || !selectedLanguage) {
       Alert.alert("Lỗi", "Thiếu thông tin sách hoặc ngôn ngữ.");
@@ -176,11 +205,6 @@ const handleRead = () => {
     } catch (err) {
       Alert.alert("Lỗi tải xuống", "Không thể lấy link file.");
     }
-  };
-
-  const handleAddFavorite = () => {
-    if (!book) return;
-    Alert.alert("⭐ Thêm yêu thích", `"${book.title}" đã được thêm vào danh sách!`);
   };
 
   if (!visible || !bookId) return null;
@@ -239,10 +263,20 @@ const handleRead = () => {
                     </View>
 
                     <TouchableOpacity
-                      style={styles.favoriteButton}
+                      style={[
+                        styles.favoriteButton,
+                        { backgroundColor: isFavorite ? "#11813a" : "#f5f5f5" },
+                      ]}
                       onPress={handleAddFavorite}
                     >
-                      <Text style={styles.favoriteButtonText}>❤️</Text>
+                      <Text
+                        style={[
+                          styles.favoriteButtonText,
+                          { color: isFavorite ? "#11813a" : "#888" },
+                        ]}
+                      >
+                        ❤️
+                      </Text>
                     </TouchableOpacity>
                   </View>
 
@@ -259,6 +293,27 @@ const handleRead = () => {
                     {displayBook.description || "Không có mô tả."}
                   </Text>
 
+                  {/* ✅ Added section like the screenshot */}
+                  <View style={styles.statsContainer}>
+                    <View style={styles.statBox}>
+                      <Text style={styles.statLabel}>Reading Level</Text>
+                      <Text style={styles.statValue}>
+                        {displayBook.reading_level || "-"}
+                      </Text>
+                    </View>
+                    <View style={[styles.statBox, styles.statBoxBorder]}>
+                      <Text style={styles.statLabel}>Pages</Text>
+                      <Text style={styles.statValue}>{displayBook.pages || "-"}</Text>
+                    </View>
+                    <View style={styles.statBox}>
+                      <Text style={styles.statLabel}>Available Languages</Text>
+                      <Text style={styles.statValue}>
+                        {languagesList?.length || "-"}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* --- Old details remain intact --- */}
                   <View style={styles.detailsContainer}>
                     <View style={styles.hr} />
                     <InfoItem label="Publisher" value={displayBook.publisher} />
@@ -270,9 +325,15 @@ const handleRead = () => {
                       value={displayBook.categories?.join(", ")}
                     />
                     <View style={styles.hr} />
-                    <InfoItem label="Source Language" value={displayBook.source_language} />
+                    <InfoItem
+                      label="Source Language"
+                      value={displayBook.source_language}
+                    />
                     <View style={styles.hr} />
-                    <InfoItem label="Country" value={displayBook.country_of_origin} />
+                    <InfoItem
+                      label="Country"
+                      value={displayBook.country_of_origin}
+                    />
                     <View style={styles.hr} />
                     <InfoItem label="Original URL" value={"Letsreadasia.org"} />
                     <View style={styles.hr} />
@@ -321,9 +382,19 @@ const styles = StyleSheet.create({
   loadingView: { padding: 40, alignItems: "center" },
   loadingText: { marginTop: 12, color: "#555" },
   errorView: { padding: 30, alignItems: "center", width: "100%" },
-  placeholderImage: { width: 150, height: 220, backgroundColor: "#e0e0e0", marginBottom: 20 },
+  placeholderImage: {
+    width: 150,
+    height: 220,
+    backgroundColor: "#e0e0e0",
+    marginBottom: 20,
+  },
   errorText: { textAlign: "center", marginBottom: 20, fontSize: 16, color: "#d32f2f" },
-  errorCloseButton: { backgroundColor: "#f0f0f0", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 4 },
+  errorCloseButton: {
+    backgroundColor: "#f0f0f0",
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 4,
+  },
   errorCloseButtonText: { fontWeight: "bold", color: "#333" },
   scrollViewContent: {
     paddingHorizontal: "10%",
@@ -331,7 +402,14 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
     alignItems: "center",
   },
-  coverWrap: { width: 160, height: 220, borderRadius: 8, overflow: "hidden", backgroundColor: "#f7f7f7", marginBottom: 12 },
+  coverWrap: {
+    width: 160,
+    height: 220,
+    borderRadius: 8,
+    overflow: "hidden",
+    backgroundColor: "#f7f7f7",
+    marginBottom: 12,
+  },
   coverImage: { width: "100%", height: "100%" },
   title: { fontSize: 20, fontWeight: "700", textAlign: "center", marginTop: 6 },
   author: { textAlign: "center", color: "#1e88e5", marginBottom: 12 },
@@ -360,9 +438,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#ddd",
-    backgroundColor: "#fff",
   },
-  favoriteButtonText: { fontSize: 20 },
+  favoriteButtonText: {
+    fontSize: 20,
+    fontWeight: "600",
+  },
   readDownloadRow: {
     flexDirection: "row",
     width: "100%",
@@ -396,6 +476,27 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     width: "100%",
   },
+
+  /* ✅ New styles for 3-box info section */
+  statsContainer: {
+    flexDirection: "row",
+    justifyContent: "space-evenly",
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "#ddd",
+    paddingVertical: 16,
+    width: "100%",
+    marginBottom: 20,
+  },
+  statBox: { flex: 1, alignItems: "center" },
+  statBoxBorder: {
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: "#ddd",
+  },
+  statLabel: { fontSize: 12, color: "#777", marginBottom: 6 },
+  statValue: { fontSize: 18, fontWeight: "bold", color: "#111" },
+
   detailsContainer: { width: "100%", paddingVertical: 8 },
   hr: { height: 1, backgroundColor: "#eee", marginVertical: 12 },
   infoRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8 },

@@ -83,7 +83,7 @@ export default function SettingsScreen() {
         p_username: username,
       });
 
-      setMessage("✅ Cập nhật thành công!");
+      setMessage("✅ Update info success!");
     } catch (err: any) {
       setMessage("❌ Lỗi: " + err.message);
     }
@@ -97,23 +97,23 @@ export default function SettingsScreen() {
 
       <ScrollView contentContainerStyle={styles.container}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.push("/profile")}>
-          <Text style={styles.backText}>⬅ Quay lại</Text>
+          <Text style={styles.backText}>⬅ Back</Text>
         </TouchableOpacity>
 
-        <Text style={styles.title}>Chỉnh sửa thông tin</Text>
+        <Text style={styles.title}>UPDATE PROFILE</Text>
 
         <View style={styles.previewWrapper}>
           <Image source={{ uri: avatar }} style={styles.previewAvatar} />
         </View>
 
         <TextInput
-          placeholder="Tên hiển thị"
+          placeholder="Your username"
           style={styles.input}
           value={username}
           onChangeText={setUsername}
         />
 
-        <Text style={{ marginBottom: 6, fontWeight: "500" }}>Chọn avatar:</Text>
+        <Text style={{ marginBottom: 6, fontWeight: "500" }}>Choose avatar:</Text>
 
         <View
           style={[
@@ -147,7 +147,7 @@ export default function SettingsScreen() {
           disabled={loading}
         >
           <Text style={styles.buttonText}>
-            {loading ? "Đang lưu..." : "Lưu thay đổi"}
+            {loading ? "Updating" : "Updated Profile"}
           </Text>
         </TouchableOpacity>
 
@@ -196,6 +196,8 @@ const styles = StyleSheet.create({
   },
 
   avatarGrid: {
+    width:"80%",
+    marginLeft:"10%",
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
@@ -214,7 +216,7 @@ const styles = StyleSheet.create({
     borderColor: "#007AFF",
     borderWidth: 3,
   },
-  avatar: { width: "90%", height: "90%", borderRadius: 9999 },
+  avatar: { width: "50%", height: "50%", borderRadius: 9999 },
 
   button: {
     backgroundColor: "#007AFF",

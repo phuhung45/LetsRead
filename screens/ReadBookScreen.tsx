@@ -41,7 +41,7 @@ export default function ReadBookScreen() {
 
   const swiperRef = useRef<any>(null);
 
-  // 🧩 FETCH BOOK + LANGUAGES
+  // ✅ FETCH BOOK + LANGUAGES
   useEffect(() => {
     if (!cleanBookUuid) {
       setLoading(false);
@@ -76,7 +76,6 @@ export default function ReadBookScreen() {
         setBookTitle(bookInfoData.title || "Untitled");
       }
 
-      // 🧠 Lấy danh sách trang
       let { data } = await supabase
         .from("book_content_page")
         .select("book_uuid, language_id, page, image, content_value")
@@ -121,7 +120,7 @@ export default function ReadBookScreen() {
     fetchBookData();
   }, [cleanBookUuid, selectedLang]);
 
-  // 🧹 Clean HTML
+  // ✅ Clean HTML
   const cleanHTML = (html: string) =>
     decode(
       html
@@ -133,53 +132,119 @@ export default function ReadBookScreen() {
         .trim()
     );
 
-  // ✅ Ghi lại tiến độ đọc
-  const updateUserReadingProgress = async (progress: number) => {
+  // ✅ Measure reading time
+  const startTimestamp = useRef<number>(Date.now());
+
+  useEffect(() => {
+    startTimestamp.current = Date.now();
+
+    return () => {
+      logReadingTime(); // log khi thoát
+    };
+  }, []);
+
+  const logReadingTime = async () => {
     try {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-
       if (!user) return;
 
-      const { error } = await supabase.from("user_reads").upsert(
-        {
-          user_id: user.id,
-          book_id: cleanBookUuid,
-          progress,
-          last_read_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id,book_id" }
-      );
+      const now = new Date();
+      const minutes = Math.max(1, Math.round((Date.now() - startTimestamp.current) / 60000));
+      const today = now.toISOString().split("T")[0];
 
-      if (error) console.log("❌ upsert user_reads error:", error);
-      else console.log("✅ Updated progress:", progress);
+      console.log("🕒 Logging reading time:", minutes, "minutes for", today);
+
+      const { error } = await supabase.rpc("add_or_update_reading_log", {
+        p_user_id: user.id,
+        p_book_uuid: cleanBookUuid,
+      });
+
+      if (error) console.error("❌ logReadingTime error:", error);
+      else console.log("✅ Logged reading time:", minutes);
+
+      startTimestamp.current = Date.now(); // reset lại
     } catch (e) {
-      console.log("reading progress error:", e);
+      console.error("⚠️ logReadingTime exception:", e);
     }
   };
 
-  // ✅ Khi Next
+  // ✅ Update reading progress
+ const updateUserReadingProgress = async (progress: number) => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    // ✅ Lấy progress hiện tại trong database
+    const { data: existing, error: fetchError } = await supabase
+      .from("user_reads")
+      .select("progress")
+      .eq("user_id", user.id)
+      .eq("book_id", cleanBookUuid)
+      .maybeSingle();
+
+    if (fetchError) {
+      console.error("⚠️ Fetch user_reads error:", fetchError);
+      return;
+    }
+
+    const currentProgress = existing?.progress ?? 0;
+
+    // ✅ Nếu đã hoàn thành (progress = 1), hoặc progress mới < hiện tại → không update
+    if (currentProgress === 1) {
+      console.log("✅ Already completed, skip update");
+      return;
+    }
+
+    if (progress <= currentProgress) {
+      console.log(`⏩ Skip update: new ${progress} <= current ${currentProgress}`);
+      return;
+    }
+
+    // ✅ Update nếu tiến bộ hơn
+    const { error } = await supabase.from("user_reads").upsert(
+      {
+        user_id: user.id,
+        book_id: cleanBookUuid,
+        progress,
+        last_read_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,book_id" }
+    );
+
+    if (error) console.log("❌ upsert user_reads error:", error);
+    else console.log("✅ Updated progress:", progress);
+  } catch (e) {
+    console.log("reading progress error:", e);
+  }
+};
+
+
+  // ✅ NEXT PAGE
   const goNext = async () => {
     if (currentIndex < pages.length - 1) {
       const nextIndex = currentIndex + 1;
       swiperRef.current?.scrollToIndex({ index: nextIndex });
       setCurrentIndex(nextIndex);
 
-      // 🔹 Tính progress (0 → 1)
       const progress =
         nextIndex + 1 >= pages.length
           ? 1
           : (nextIndex + 1) / pages.length;
 
+      await logReadingTime(); // ✅ log mỗi lần next
       await updateUserReadingProgress(progress);
     } else {
+      await logReadingTime(); // ✅ log khi đọc xong
       await updateUserReadingProgress(1);
-      console.log("🎉 Completed reading this book!");
     }
   };
 
-  // ⬅️ Prev
+  // ✅ PREV PAGE
   const goPrev = () => {
     if (currentIndex > 0) {
       swiperRef.current?.scrollToIndex({ index: currentIndex - 1 });
@@ -187,7 +252,7 @@ export default function ReadBookScreen() {
     }
   };
 
-  // 📥 Popup download
+  // ✅ Download popup
   const openDownloadPopup = () => {
     if (!pdfUrl && !epubUrl) return;
     setShowDownloadPopup(true);
@@ -219,7 +284,7 @@ export default function ReadBookScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor }}>
-      {/* HEADER */}
+      {/* ✅ HEADER */}
       <View
         style={{
           flexDirection: "row",
@@ -231,11 +296,11 @@ export default function ReadBookScreen() {
           backgroundColor: darkMode ? "#222" : "#f0f0f0",
         }}
       >
-        {/* Back + Title */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <TouchableOpacity onPress={() => router.replace("/")}>
             <Ionicons name="arrow-back" size={26} color={textColor} />
           </TouchableOpacity>
+
           <Text
             numberOfLines={1}
             style={{
@@ -249,7 +314,6 @@ export default function ReadBookScreen() {
           </Text>
         </View>
 
-        {/* Picker */}
         <View style={{ flex: 1, alignItems: "center" }}>
           <View
             style={{
@@ -273,7 +337,6 @@ export default function ReadBookScreen() {
           </View>
         </View>
 
-        {/* Dark mode & Download */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Switch value={darkMode} onValueChange={setDarkMode} />
           <TouchableOpacity onPress={openDownloadPopup}>
@@ -310,6 +373,7 @@ export default function ReadBookScreen() {
                 }}
               />
             )}
+
             <Text
               style={{
                 fontSize: 22,
@@ -325,7 +389,7 @@ export default function ReadBookScreen() {
         ))}
       </SwiperFlatList>
 
-      {/* ✅ PREV / NEXT */}
+      {/* ✅ PREV / NEXT BUTTONS */}
       <View
         style={{
           position: "absolute",
@@ -365,7 +429,41 @@ export default function ReadBookScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* POPUP */}
+      {/* ✅ FIXED PAGE INDICATOR */}
+      <View
+        style={{
+          position: "absolute",
+          bottom: 20,
+          left: 0,
+          right: 0,
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 50,
+        }}
+      >
+        <View
+          style={{
+            backgroundColor: darkMode
+              ? "rgba(255,255,255,0.15)"
+              : "rgba(0,0,0,0.25)",
+            paddingHorizontal: 16,
+            paddingVertical: 6,
+            borderRadius: 20,
+          }}
+        >
+          <Text
+            style={{
+              color: darkMode ? "#fff" : "#000",
+              fontSize: 16,
+              fontWeight: "700",
+            }}
+          >
+            {currentIndex + 1} / {pages.length}
+          </Text>
+        </View>
+      </View>
+
+      {/* ✅ DOWNLOAD POPUP */}
       <Modal
         visible={showDownloadPopup}
         transparent

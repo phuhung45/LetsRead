@@ -11,6 +11,8 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { supabase } from "../lib/supabase";
+
+// ✅ Components gốc
 import HeaderMobile from "../components/HeaderMobile";
 import HeaderDesktop from "../components/HeaderDesktop";
 import FooterMobile from "../components/FooterMobile";
@@ -18,7 +20,11 @@ import FooterDesktop from "../components/FooterDesktop";
 import ImageSlider from "../components/ImageSlider";
 import CategoryList from "../components/CategoryList";
 import AppIntro from "../components/AppIntro";
-import BookDetailPopup from "../components/BookDetailPopup"; // ✅ popup chi tiết sách
+import BookDetailPopup from "../components/BookDetailPopup";
+
+// ✅ NEW
+import SearchBarWithFilter from "../components/SearchBarWithFilter";
+import FilterPopup from "../components/FilterPopup";
 
 // 📱 Hook kiểm tra thiết bị
 const useIsMobile = () => {
@@ -139,7 +145,7 @@ const BookListByCategory = ({
         {pagedBooks.map((b) => (
           <TouchableOpacity
             key={b.book_uuid}
-            onPress={() => onSelectBook(b)} // ✅ click mở popup
+            onPress={() => onSelectBook(b)}
             style={{ width: bookWidth, padding: 4 }}
           >
             <View style={styles.bookCard}>
@@ -172,9 +178,23 @@ export default function Index() {
   const [booksByCategory, setBooksByCategory] = useState<Record<string, any[]>>(
     {}
   );
-  const [languageId] = useState("4846240843956224");
+
   const [loading, setLoading] = useState(true);
-  const [selectedBook, setSelectedBook] = useState<any>(null); // ✅ popup state
+  const [languageId] = useState("4846240843956224");
+
+  const [selectedBook, setSelectedBook] = useState<any>(null);
+
+  // ✅ Filter category từ CategoryList
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
+    null
+  );
+
+  // ✅ NEW — SEARCH
+  const [searchText, setSearchText] = useState("");
+
+  // ✅ NEW — FILTER POPUP
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [selectedFilterCats, setSelectedFilterCats] = useState<string[]>([]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -202,11 +222,11 @@ export default function Index() {
         grouped[bc.category_id].push(book);
       }
 
-      const filteredCategories = (categoriesData || []).filter(
+      const filtered = (categoriesData || []).filter(
         (c) => grouped[c.id]?.length > 0
       );
 
-      setCategories(filteredCategories);
+      setCategories(filtered);
       setBooksByCategory(grouped);
       setLoading(false);
     };
@@ -226,6 +246,13 @@ export default function Index() {
     );
   }
 
+  // ✅ FILTER CATEGORY FINAL LOGIC
+  const categoryListToShow = selectedFilterCats.length
+    ? categories.filter((c) => selectedFilterCats.includes(c.id))
+    : selectedCategoryId
+    ? categories.filter((c) => c.id === selectedCategoryId)
+    : categories;
+
   return (
     <SafeAreaView style={styles.container}>
       {isMobile ? <HeaderMobile /> : <HeaderDesktop />}
@@ -236,36 +263,41 @@ export default function Index() {
             flexGrow: 1,
             paddingVertical: 16,
             paddingHorizontal: "5%",
-            paddingBottom: isMobile ? 100 : 40, // chừa chỗ footer mobile
+            paddingBottom: isMobile ? 100 : 40,
           }}
         >
           <View style={{ marginHorizontal: "-5%" }}>
             <ImageSlider />
           </View>
 
-          {categories.map((cat) => (
+          {/* ✅ NEW Search + Filter */}
+          <SearchBarWithFilter
+            value={searchText}
+            onChangeText={setSearchText}
+            onOpenFilter={() => setFilterVisible(true)}
+          />
+
+          {/* ✅ Render CategoryList + FILTER COMBINED */}
+          {categoryListToShow.map((cat) => (
             <BookListByCategory
               key={cat.id}
-              books={booksByCategory[cat.id] || []}
+              books={(booksByCategory[cat.id] || []).filter((b) =>
+                b.title.toLowerCase().includes(searchText.toLowerCase())
+              )}
               categoryName={cat.name}
-              onSelectBook={(book) => setSelectedBook(book)} // ✅ click mở popup
+              onSelectBook={(book) => setSelectedBook(book)}
             />
           ))}
 
+          {/* ✅ CategoryList cũ */}
           <CategoryList
-            onSelectCategory={(cat: { id: string; name: string; icon: string }) =>
-              console.log("Selected:", cat.name)
-            }
+            onSelectCategory={(cat) => setSelectedCategoryId(cat.id)}
           />
 
-          {/* ✅ Chỉ hiện AppIntro trên desktop */}
           {!isMobile && <AppIntro />}
-
-          {/* ✅ FooterDesktop nằm trong ScrollView */}
           {!isMobile && <FooterDesktop />}
         </ScrollView>
 
-        {/* ✅ FooterMobile luôn cố định */}
         {isMobile && (
           <View style={styles.footerMobileWrapper}>
             <FooterMobile />
@@ -273,11 +305,22 @@ export default function Index() {
         )}
       </View>
 
-      {/* ✅ Popup chi tiết sách */}
+      {/* ✅ POPUP DETAILS */}
       <BookDetailPopup
         visible={!!selectedBook}
         onClose={() => setSelectedBook(null)}
-        bookId={selectedBook?.book_uuid} // ✅ truyền book_uuid đúng chuẩn
+        bookId={selectedBook?.book_uuid}
+      />
+
+      {/* ✅ POPUP FILTER */}
+      <FilterPopup
+        visible={filterVisible}
+        onClose={() => setFilterVisible(false)}
+        categories={categories}
+        selectedCategories={selectedFilterCats}
+        setSelectedCategories={setSelectedFilterCats}
+        onClear={() => setSelectedFilterCats([])}
+        onApply={() => setFilterVisible(false)}
       />
     </SafeAreaView>
   );

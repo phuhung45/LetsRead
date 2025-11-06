@@ -143,32 +143,44 @@ export default function ReadBookScreen() {
     };
   }, []);
 
-  const logReadingTime = async () => {
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
+const logReadingTime = async () => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
 
-      const now = new Date();
-      const minutes = Math.max(1, Math.round((Date.now() - startTimestamp.current) / 60000));
-      const today = now.toISOString().split("T")[0];
+    const now = new Date();
+    const minutes = Math.max(1, Math.round((Date.now() - startTimestamp.current) / 60000));
+    const today = now.toISOString().split("T")[0]; // 👉 "2025-11-05"
 
-      console.log("🕒 Logging reading time:", minutes, "minutes for", today);
+    console.log("🕒 Logging reading time:", minutes, "minutes for", today);
 
-      const { error } = await supabase.rpc("add_or_update_reading_log", {
-        p_user_id: user.id,
-        p_book_uuid: cleanBookUuid,
-      });
+    // ✅ Dùng upsert để tránh duplicate
+    const { error } = await supabase
+      .from("reading_logs")
+      .upsert(
+        {
+          user_id: user.id,
+          book_uuid: cleanBookUuid,
+          date: today, // 👈 THÊM DÒNG NÀY để tránh lỗi null
+          last_read_at: now.toISOString(),
+          minutes_read: minutes,
+        },
+        { onConflict: ["user_id", "book_uuid"] }
+      );
 
-      if (error) console.error("❌ logReadingTime error:", error);
-      else console.log("✅ Logged reading time:", minutes);
+    if (error) console.error("❌ logReadingTime error:", error);
+    else console.log("✅ Logged reading time:", minutes);
 
-      startTimestamp.current = Date.now(); // reset lại
-    } catch (e) {
-      console.error("⚠️ logReadingTime exception:", e);
-    }
-  };
+    startTimestamp.current = Date.now();
+  } catch (e) {
+    console.error("⚠️ logReadingTime exception:", e);
+  }
+};
+
+
+
 
   // ✅ Update reading progress
  const updateUserReadingProgress = async (progress: number) => {

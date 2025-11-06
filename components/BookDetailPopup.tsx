@@ -41,28 +41,35 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
   const [languagesList, setLanguagesList] = useState<{ id: string; name: string }[]>([]);
   const [isFavorite, setIsFavorite] = useState(false);
+  const [bookCache, setBookCache] = useState<Record<string, any>>({}); // ✅ cache theo language_id
 
   const fetchBookByLanguage = async (language_id: string) => {
     if (!bookId) return;
+
+    // ✅ Cache hit — không cần fetch lại
+    if (bookCache[language_id]) {
+      setBook(bookCache[language_id]);
+      return;
+    }
+
     setLoading(true);
     try {
-      const { data: bookData, error: bookError } = await supabase
-        .from("books")
-        .select("*")
-        .eq("book_uuid", bookId)
-        .eq("language_id", language_id)
-        .maybeSingle();
+      // Chạy 2 truy vấn song song
+      const [{ data: bookData, error: bookError }, { data: catRel }] = await Promise.all([
+        supabase
+          .from("books")
+          .select("*")
+          .eq("book_uuid", bookId)
+          .eq("language_id", language_id)
+          .maybeSingle(),
+        supabase.from("book_categories").select("category_id").eq("book_id", bookId),
+      ]);
 
       if (bookError) throw bookError;
       if (!bookData) {
         setBook(null);
         return;
       }
-
-      const { data: catRel } = await supabase
-        .from("book_categories")
-        .select("category_id")
-        .eq("book_id", bookData.book_uuid);
 
       const catIds = catRel?.map((c: any) => c.category_id) ?? [];
       let categories: string[] = [];
@@ -74,7 +81,11 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
         categories = catNames?.map((c: any) => c.name) ?? [];
       }
 
-      setBook({ ...bookData, categories });
+      const bookResult = { ...bookData, categories };
+      setBook(bookResult);
+
+      // ✅ Lưu cache
+      setBookCache((prev) => ({ ...prev, [language_id]: bookResult }));
     } catch (err) {
       Alert.alert("Lỗi tải dữ liệu", "Không thể tải chi tiết sách.");
     } finally {
@@ -88,6 +99,7 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
       setLanguagesList([]);
       setSelectedLanguage(null);
       setIsFavorite(false);
+      setBookCache({});
       return;
     }
 
@@ -130,7 +142,6 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
     }
   }, [selectedLanguage]);
 
-  // ✅ Fix: checkFavorite có user_id và không lỗi trùng
   useEffect(() => {
     const checkFavorite = async () => {
       const { data: user } = await supabase.auth.getUser();
@@ -150,7 +161,6 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
     checkFavorite();
   }, [bookId]);
 
-  // ✅ Fix: handleAddFavorite có user_id và kiểm tra trùng
   const handleAddFavorite = async () => {
     const { data: user } = await supabase.auth.getUser();
     const userId = user?.user?.id;

@@ -19,6 +19,7 @@ import HeaderDesktop from "../../components/HeaderDesktop";
 import FooterMobile from "../../components/FooterMobile";
 import FooterDesktop from "../../components/FooterDesktop";
 import BookDetailPopup from "../../components/BookDetailPopup"; // ✅ thêm dòng này
+import { router } from "expo-router";
 
 export default function AllBooks() {
   const [books, setBooks] = useState<any[]>([]);
@@ -31,8 +32,23 @@ export default function AllBooks() {
   const isMobile = !isWeb;
 
   useEffect(() => {
-    loadBooks();
+    checkAuth();
   }, []);
+
+  async function checkAuth() {
+    // ✅ Lấy session
+    const { data: { session } } = await supabase.auth.getSession();
+
+    // ✅ Nếu không có session → chuyển sang profile
+    if (!session) {
+      router.replace("/profile");
+      return;
+    }
+
+    // ✅ Nếu có session → load sách
+    loadBooks();
+  }
+
 
   async function loadBooks() {
     setLoading(true);

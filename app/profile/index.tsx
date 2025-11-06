@@ -18,6 +18,7 @@ import HeaderDesktop from "../../components/HeaderDesktop";
 import FooterDesktop from "../../components/FooterDesktop";
 import HeaderMobile from "../../components/HeaderMobile";
 import FooterMobile from "../../components/FooterMobile";
+import BookDetailPopup from "../../components/BookDetailPopup";
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -31,6 +32,9 @@ export default function ProfileScreen() {
     weekData: Array(7).fill(0),
   });
   const [keepReading, setKeepReading] = useState<any[]>([]);
+  const [popupVisible, setPopupVisible] = useState(false);
+  const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [showGoalPopup, setShowGoalPopup] = useState(false);
   const [newGoal, setNewGoal] = useState("");
@@ -158,10 +162,10 @@ export default function ProfileScreen() {
 
       const mapped =
         data?.map((c: any) => ({
+          id: c.id,
           name: c.name,
-          icon_url:
-            c.icon_url ||
-            "https://cdn-icons-png.flaticon.com/512/2991/2991148.png",
+          icon_url: c.icon_url,
+          read_count: c.read_count
         })) || [];
 
       setStats((prev: any) => ({
@@ -373,15 +377,26 @@ export default function ProfileScreen() {
         <View style={styles.catRow}>
           {topCategories?.length ? (
             topCategories.slice(0, 3).map((c: any, i: number) => (
-              <View key={i} style={styles.catBox}>
+              <TouchableOpacity
+                key={i}
+                style={styles.catBox}
+                onPress={() =>
+                  router.push(
+                    `/search?category_id=${c.id}&category_name=${encodeURIComponent(c.name)}`
+                  )
+                }
+
+
+              >
                 <Image source={{ uri: c.icon_url }} style={styles.catIcon} />
                 <Text style={styles.catText}>{c.name}</Text>
-              </View>
+              </TouchableOpacity>
             ))
           ) : (
             <Text style={styles.subText}>No categories yet</Text>
           )}
         </View>
+
 
         {/* ✅ Keep Reading */}
         <Text style={[styles.sectionTitle, { marginTop: 30 }]}>
@@ -390,11 +405,15 @@ export default function ProfileScreen() {
         <View style={styles.bookRow}>
           {keepReading?.length ? (
             keepReading.map((b, i) => (
-              <TouchableOpacity
-                key={i}
-                style={styles.bookCard}
-                onPress={() => router.push(`/read/${b.book_uuid}`)}
-              >
+            <TouchableOpacity
+              key={i}
+              style={styles.bookCard}
+              onPress={() => {
+                setSelectedBookId(b.book_uuid);
+                setPopupVisible(true);
+              }}
+            >
+
                 <Image
                   source={{ uri: b.cover_image }}
                   style={styles.bookCover}
@@ -409,6 +428,14 @@ export default function ProfileScreen() {
           )}
         </View>
       </ScrollView>
+      {/* ✅ BOOK POPUP */}
+      {popupVisible && selectedBookId && (
+        <BookDetailPopup
+          visible={popupVisible}
+          bookId={selectedBookId}
+          onClose={() => setPopupVisible(false)}
+        />
+      )}
 
       {/* ✅ FOOTER */}
       {isMobile ? (

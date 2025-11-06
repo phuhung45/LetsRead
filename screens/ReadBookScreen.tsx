@@ -1,26 +1,38 @@
-import React, { useEffect, useState, useRef } from "react";
-import {
-  View,
-  Image,
-  ActivityIndicator,
-  Text,
-  Dimensions,
-  SafeAreaView,
-  TouchableOpacity,
-  ScrollView,
-  Switch,
-  Modal,
-  Pressable,
-} from "react-native";
-import { supabase } from "../lib/supabase";
-import { useLocalSearchParams, router } from "expo-router";
-import { SwiperFlatList } from "react-native-swiper-flatlist";
-import { decode } from "he";
+import { Ionicons } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
 import * as Linking from "expo-linking";
-import { Ionicons } from "@expo/vector-icons";
+import { router, useLocalSearchParams } from "expo-router";
+import { decode } from "he";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Dimensions,
+  Image,
+  Modal,
+  Pressable,
+  SafeAreaView,
+  View,
+  Text,
+  TouchableOpacity,
+  Platform,
+  FlatList,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  Switch,
+  StyleSheet,
+} from "react-native";
+import { supabase } from "../lib/supabase";
 
 const { width, height } = Dimensions.get("window");
+
+/**
+ * ReadBookScreen — optimized for mobile:
+ * - FlatList paging (stable)
+ * - Accumulator timer to prevent overcounting
+ * - Minimal network calls (only when adding 1 minute or progress changes)
+ * - Reset accumulator on manual navigation / swipe
+ * - Safer image sizing to avoid OOM
+ */
 
 export default function ReadBookScreen() {
   const params = useLocalSearchParams();
@@ -39,88 +51,108 @@ export default function ReadBookScreen() {
   const [bookTitle, setBookTitle] = useState<string>("");
   const [showDownloadPopup, setShowDownloadPopup] = useState(false);
 
-  const swiperRef = useRef<any>(null);
+  const flatRef = useRef<FlatList<any> | null>(null);
 
-  // ✅ FETCH BOOK + LANGUAGES
+  /* ---------------------------- FETCH BOOK DATA ---------------------------- */
   useEffect(() => {
     if (!cleanBookUuid) {
       setLoading(false);
       return;
     }
 
+    let mounted = true;
+
     const fetchBookData = async () => {
-      setLoading(true);
+      try {
+        setLoading(true);
 
-      const { data: bookInfoData } = await supabase
-        .from("book_content")
-        .select("pdf_url, epub_url, title")
-        .eq("book_id", cleanBookUuid)
-        .eq("language_id", selectedLang)
-        .limit(1)
-        .maybeSingle();
-
-      if (!bookInfoData) {
-        const { data: fallbackBook } = await supabase
+        const { data: bookInfoData } = await supabase
           .from("book_content")
           .select("pdf_url, epub_url, title")
           .eq("book_id", cleanBookUuid)
+          .eq("language_id", selectedLang)
           .limit(1)
           .maybeSingle();
 
-        setPdfUrl(fallbackBook?.pdf_url || null);
-        setEpubUrl(fallbackBook?.epub_url || null);
-        setBookTitle(fallbackBook?.title || "Untitled");
-      } else {
-        setPdfUrl(bookInfoData.pdf_url || null);
-        setEpubUrl(bookInfoData.epub_url || null);
-        setBookTitle(bookInfoData.title || "Untitled");
-      }
+        if (!bookInfoData) {
+          const { data: fallbackBook } = await supabase
+            .from("book_content")
+            .select("pdf_url, epub_url, title")
+            .eq("book_id", cleanBookUuid)
+            .limit(1)
+            .maybeSingle();
 
-      let { data } = await supabase
-        .from("book_content_page")
-        .select("book_uuid, language_id, page, image, content_value")
-        .eq("book_uuid", cleanBookUuid)
-        .eq("language_id", selectedLang)
-        .order("page");
+          if (!mounted) return;
+          setPdfUrl(fallbackBook?.pdf_url || null);
+          setEpubUrl(fallbackBook?.epub_url || null);
+          setBookTitle(fallbackBook?.title || "Untitled");
+        } else {
+          if (!mounted) return;
+          setPdfUrl(bookInfoData.pdf_url || null);
+          setEpubUrl(bookInfoData.epub_url || null);
+          setBookTitle(bookInfoData.title || "Untitled");
+        }
 
-      if (!data || data.length === 0) {
-        const { data: fallbackData } = await supabase
+        // pages (limit reasonable to avoid giant payload)
+        const { data } = await supabase
           .from("book_content_page")
           .select("book_uuid, language_id, page, image, content_value")
           .eq("book_uuid", cleanBookUuid)
-          .order("page")
-          .limit(20);
+          .eq("language_id", selectedLang)
+          .order("page");
 
-        data = fallbackData || [];
+        let pagesData = data || [];
+
+        if ((!pagesData || pagesData.length === 0) && mounted) {
+          const { data: fallbackData } = await supabase
+            .from("book_content_page")
+            .select("book_uuid, language_id, page, image, content_value")
+            .eq("book_uuid", cleanBookUuid)
+            .order("page")
+            .limit(200);
+
+          pagesData = fallbackData || [];
+        }
+
+        if (mounted) setPages(pagesData || []);
+      } catch (e) {
+        console.error("fetchBookData error:", e);
+      } finally {
+        if (mounted) setLoading(false);
       }
-
-      setPages(data || []);
-      setLoading(false);
     };
 
     const fetchLanguages = async () => {
-      const { data } = await supabase
-        .from("book_content_page")
-        .select("language_id")
-        .eq("book_uuid", cleanBookUuid);
+      try {
+        const { data } = await supabase
+          .from("book_content_page")
+          .select("language_id")
+          .eq("book_uuid", cleanBookUuid);
 
-      const uniqueIds = Array.from(new Set(data?.map((d) => d.language_id)));
+        const uniqueIds = Array.from(new Set(data?.map((d) => d.language_id)));
 
-      if (uniqueIds.length > 0) {
-        const { data: langs } = await supabase
-          .from("languages")
-          .select("id, name")
-          .in("id", uniqueIds);
+        if (uniqueIds.length > 0) {
+          const { data: langs } = await supabase
+            .from("languages")
+            .select("id, name")
+            .in("id", uniqueIds);
 
-        setLanguages(langs || []);
+          if (mounted) setLanguages(langs || []);
+        }
+      } catch (e) {
+        console.error("fetchLanguages error:", e);
       }
     };
 
     fetchLanguages();
     fetchBookData();
+
+    return () => {
+      mounted = false;
+    };
   }, [cleanBookUuid, selectedLang]);
 
-  // ✅ Clean HTML
+  /* ---------------------------- CLEAN HTML ---------------------------- */
   const cleanHTML = (html: string) =>
     decode(
       html
@@ -132,139 +164,186 @@ export default function ReadBookScreen() {
         .trim()
     );
 
-  // ✅ Measure reading time
-  const startTimestamp = useRef<number>(Date.now());
+  /* ---------------------------- ACCUMULATOR REALTIME (NO OVERCOUNT) ---------------------------- */
 
+  // lastTick: timestamp of previous tick
+  const lastTick = useRef<number>(Date.now());
+  // elapsedMs: accumulated ms since last full minute consumed
+  const elapsedMs = useRef<number>(0);
+  // readingActive: allows pausing accumulation if needed
+  const readingActive = useRef<boolean>(true);
+  // ensure we don't run multiple concurrent addOneMinute
+  const addingLock = useRef<boolean>(false);
+
+  // 5s tick — triggers accumulation logic. 5s chosen to reduce throttling issues on RN
   useEffect(() => {
-    startTimestamp.current = Date.now();
+    lastTick.current = Date.now();
+    elapsedMs.current = 0;
+
+    const tick = setInterval(() => {
+      handleRealtimeTick();
+    }, 5000);
 
     return () => {
-      logReadingTime(); // log khi thoát
+      clearInterval(tick);
+      // flush any full minutes on unmount/book change
+      flushAccumulator();
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleanBookUuid]); // reset when book changes
 
-const logReadingTime = async () => {
-  try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
+  const handleRealtimeTick = async () => {
+    if (!readingActive.current) {
+      lastTick.current = Date.now();
+      return;
+    }
 
-    const now = new Date();
-    const minutes = Math.max(1, Math.round((Date.now() - startTimestamp.current) / 60000));
-    const today = now.toISOString().split("T")[0]; // 👉 "2025-11-05"
+    const now = Date.now();
+    const delta = now - lastTick.current;
+    lastTick.current = now;
+    elapsedMs.current += delta;
 
-    console.log("🕒 Logging reading time:", minutes, "minutes for", today);
+    // consume whole minute chunks
+    while (elapsedMs.current >= 60000) {
+      // if an add is already running, break to avoid concurrent upserts
+      if (addingLock.current) break;
+      elapsedMs.current -= 60000;
+      await addOneMinute();
+    }
+  };
 
-    // ✅ Dùng upsert để tránh duplicate
-    const { error } = await supabase
-      .from("reading_logs")
-      .upsert(
+  const flushAccumulator = async () => {
+    // consume any full minutes
+    while (elapsedMs.current >= 60000) {
+      elapsedMs.current -= 60000;
+      await addOneMinute();
+    }
+  };
+
+  const addOneMinute = async () => {
+    if (addingLock.current) return;
+    addingLock.current = true;
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        addingLock.current = false;
+        return;
+      }
+
+      const today = new Date().toISOString().split("T")[0];
+
+      // fetch existing minutes safely
+      const { data: existing } = await supabase
+        .from("reading_logs")
+        .select("minutes_read")
+        .eq("user_id", user.id)
+        .eq("book_uuid", cleanBookUuid)
+        .eq("date", today)
+        .maybeSingle();
+
+      const current = existing?.minutes_read ?? 0;
+      const newTotal = current + 1;
+
+      // minimal upsert payload
+      await supabase.from("reading_logs").upsert(
         {
           user_id: user.id,
           book_uuid: cleanBookUuid,
-          date: today, // 👈 THÊM DÒNG NÀY để tránh lỗi null
-          last_read_at: now.toISOString(),
-          minutes_read: minutes,
+          date: today,
+          minutes_read: newTotal,
+          last_read_at: new Date().toISOString(),
+          // do not send created_at — DB should default it
         },
-        { onConflict: ["user_id", "book_uuid"] }
+        { onConflict: ["user_id", "book_uuid", "date"] }
       );
 
-    if (error) console.error("❌ logReadingTime error:", error);
-    else console.log("✅ Logged reading time:", minutes);
-
-    startTimestamp.current = Date.now();
-  } catch (e) {
-    console.error("⚠️ logReadingTime exception:", e);
-  }
-};
-
-
-
-
-  // ✅ Update reading progress
- const updateUserReadingProgress = async (progress: number) => {
-  try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) return;
-
-    // ✅ Lấy progress hiện tại trong database
-    const { data: existing, error: fetchError } = await supabase
-      .from("user_reads")
-      .select("progress")
-      .eq("user_id", user.id)
-      .eq("book_id", cleanBookUuid)
-      .maybeSingle();
-
-    if (fetchError) {
-      console.error("⚠️ Fetch user_reads error:", fetchError);
-      return;
+      console.log(`🕒 +1 minute -> total=${newTotal}`);
+    } catch (e) {
+      console.error("addOneMinute error:", e);
+    } finally {
+      addingLock.current = false;
     }
+  };
 
-    const currentProgress = existing?.progress ?? 0;
+  /* ---------------------------- READING PROGRESS ---------------------------- */
 
-    // ✅ Nếu đã hoàn thành (progress = 1), hoặc progress mới < hiện tại → không update
-    if (currentProgress === 1) {
-      console.log("✅ Already completed, skip update");
-      return;
+  const updateUserReadingProgress = async (progress: number) => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: existing } = await supabase
+        .from("user_reads")
+        .select("progress")
+        .eq("user_id", user.id)
+        .eq("book_id", cleanBookUuid)
+        .maybeSingle();
+
+      const currentProgress = existing?.progress ?? 0;
+      if (currentProgress === 1) return;
+      if (progress <= currentProgress) return;
+
+      await supabase.from("user_reads").upsert(
+        {
+          user_id: user.id,
+          book_id: cleanBookUuid,
+          progress,
+          last_read_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,book_id" }
+      );
+    } catch (e) {
+      console.log("reading progress error:", e);
     }
+  };
 
-    if (progress <= currentProgress) {
-      console.log(`⏩ Skip update: new ${progress} <= current ${currentProgress}`);
-      return;
-    }
+  /* ---------------------------- NAVIGATION HANDLERS ---------------------------- */
 
-    // ✅ Update nếu tiến bộ hơn
-    const { error } = await supabase.from("user_reads").upsert(
-      {
-        user_id: user.id,
-        book_id: cleanBookUuid,
-        progress,
-        last_read_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,book_id" }
-    );
+  const goToIndex = async (index: number) => {
+    if (!pages || pages.length === 0) return;
+    const clamped = Math.max(0, Math.min(index, pages.length - 1));
+    flatRef.current?.scrollToIndex({ index: clamped, animated: true });
+    setCurrentIndex(clamped);
+  };
 
-    if (error) console.log("❌ upsert user_reads error:", error);
-    else console.log("✅ Updated progress:", progress);
-  } catch (e) {
-    console.log("reading progress error:", e);
-  }
-};
-
-
-  // ✅ NEXT PAGE
-  const goNext = async () => {
+  const onNext = async () => {
     if (currentIndex < pages.length - 1) {
       const nextIndex = currentIndex + 1;
-      swiperRef.current?.scrollToIndex({ index: nextIndex });
-      setCurrentIndex(nextIndex);
+      await goToIndex(nextIndex);
 
       const progress =
-        nextIndex + 1 >= pages.length
-          ? 1
-          : (nextIndex + 1) / pages.length;
+        nextIndex + 1 >= pages.length ? 1 : (nextIndex + 1) / pages.length;
 
-      await logReadingTime(); // ✅ log mỗi lần next
+      // reset accumulator when user manually navigates pages
+      lastTick.current = Date.now();
+      elapsedMs.current = 0;
+
       await updateUserReadingProgress(progress);
     } else {
-      await logReadingTime(); // ✅ log khi đọc xong
+      // finished
+      lastTick.current = Date.now();
+      elapsedMs.current = 0;
       await updateUserReadingProgress(1);
     }
   };
 
-  // ✅ PREV PAGE
-  const goPrev = () => {
+  const onPrev = () => {
     if (currentIndex > 0) {
-      swiperRef.current?.scrollToIndex({ index: currentIndex - 1 });
-      setCurrentIndex(currentIndex - 1);
+      const prevIndex = currentIndex - 1;
+      flatRef.current?.scrollToIndex({ index: prevIndex, animated: true });
+      setCurrentIndex(prevIndex);
+      // reset accumulator
+      lastTick.current = Date.now();
+      elapsedMs.current = 0;
     }
   };
 
-  // ✅ Download popup
+  /* ---------------------------- DOWNLOAD ---------------------------- */
+
   const openDownloadPopup = () => {
     if (!pdfUrl && !epubUrl) return;
     setShowDownloadPopup(true);
@@ -276,9 +355,60 @@ const logReadingTime = async () => {
     if (fileUrl) Linking.openURL(fileUrl);
   };
 
+  /* ---------------------------- FLATLIST ITEM RENDERER ---------------------------- */
+
+  const renderPage = ({ item, index }: { item: any; index: number }) => {
+    // scale image down to device width to avoid OOM
+    const imageHeight = Math.min(height * 0.5, 1200); // cap height
+    return (
+      <View style={{ width, alignItems: "center", padding: 20 }}>
+        {item.image && (
+          <Image
+            source={{ uri: item.image }}
+            style={{
+              width,
+              height: imageHeight,
+              resizeMode: "contain",
+              marginBottom: 20,
+              backgroundColor: "#f6f6f6",
+            }}
+            // react-native-web ignores defaultSource; keep minimal props
+          />
+        )}
+
+        <Text
+          style={{
+            fontSize: 22,
+            lineHeight: 28,
+            textAlign: "justify",
+            color: darkMode ? "#f1f1f1" : "#111",
+            paddingHorizontal: Math.min(24, width * 0.05),
+          }}
+        >
+          {cleanHTML(item.content_value || "")}
+        </Text>
+      </View>
+    );
+  };
+
+  const handleMomentumScrollEnd = async (
+    e: NativeSyntheticEvent<NativeScrollEvent>
+  ) => {
+    const offsetX = e.nativeEvent.contentOffset.x;
+    const idx = Math.round(offsetX / width);
+    if (idx !== currentIndex) {
+      setCurrentIndex(idx);
+      // reset accumulator when user swipes
+      lastTick.current = Date.now();
+      elapsedMs.current = 0;
+    }
+  };
+
+  /* ---------------------------- RENDER UI ---------------------------- */
+
   if (loading)
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+      <View style={styles.center}>
         <ActivityIndicator size="large" />
         <Text>Loading book...</Text>
       </View>
@@ -286,7 +416,7 @@ const logReadingTime = async () => {
 
   if (pages.length === 0)
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+      <View style={styles.center}>
         <Text>No pages found 😢</Text>
       </View>
     );
@@ -296,47 +426,20 @@ const logReadingTime = async () => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor }}>
-      {/* ✅ HEADER */}
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          paddingLeft: "15%",
-          paddingRight: "15%",
-          paddingVertical: 10,
-          backgroundColor: darkMode ? "#222" : "#f0f0f0",
-        }}
-      >
+      {/* HEADER */}
+      <View style={[styles.header, { backgroundColor: darkMode ? "#222" : "#f0f0f0" }]}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <TouchableOpacity onPress={() => router.replace("/")}>
+          <TouchableOpacity onPress={() => router.replace('/')}>
             <Ionicons name="arrow-back" size={26} color={textColor} />
           </TouchableOpacity>
 
-          <Text
-            numberOfLines={1}
-            style={{
-              color: textColor,
-              fontSize: 18,
-              fontWeight: "600",
-              maxWidth: width * 0.4,
-            }}
-          >
+          <Text numberOfLines={1} style={[styles.title, { color: textColor }]}>
             {bookTitle || "Book"}
           </Text>
         </View>
 
         <View style={{ flex: 1, alignItems: "center" }}>
-          <View
-            style={{
-              borderWidth: 1,
-              borderColor: "#ccc",
-              borderRadius: 8,
-              width: 160,
-              overflow: "hidden",
-              backgroundColor: darkMode ? "#333" : "#fff",
-            }}
-          >
+          <View style={[styles.langPicker, { backgroundColor: darkMode ? "#333" : "#fff" }]}>
             <Picker
               selectedValue={selectedLang}
               style={{ width: "100%", height: 38, color: textColor }}
@@ -357,199 +460,75 @@ const logReadingTime = async () => {
         </View>
       </View>
 
-      {/* ✅ SWIPER */}
-      <SwiperFlatList
-        ref={swiperRef}
-        showPagination
-        paginationStyleItemInactive={{ width: 8, height: 8, opacity: 0.3 }}
-        paginationStyleItemActive={{ opacity: 1 }}
-        onChangeIndex={({ index }) => setCurrentIndex(index)}
-      >
-        {pages.map((page, index) => (
-          <ScrollView
-            key={index}
-            contentContainerStyle={{
-              width,
-              alignItems: "center",
-              padding: 20,
-            }}
-          >
-            {page.image && (
-              <Image
-                source={{ uri: page.image }}
-                style={{
-                  width,
-                  height: height * 0.5,
-                  resizeMode: "contain",
-                  marginBottom: 20,
-                }}
-              />
-            )}
+      {/* FLATLIST PAGING */}
+      <FlatList
+        ref={(r) => (flatRef.current = r)}
+        horizontal
+        pagingEnabled
+        data={pages}
+        keyExtractor={(_, i) => String(i)}
+        renderItem={renderPage}
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={handleMomentumScrollEnd}
+        initialScrollIndex={currentIndex}
+        getItemLayout={(_, index) => ({
+          length: width,
+          offset: width * index,
+          index,
+        })}
+        windowSize={3}
+        maxToRenderPerBatch={2}
+        removeClippedSubviews
+      />
 
-            <Text
-              style={{
-                fontSize: 22,
-                lineHeight: 28,
-                textAlign: "justify",
-                color: textColor,
-                paddingHorizontal: width * 0.2,
-              }}
-            >
-              {cleanHTML(page.content_value || "")}
-            </Text>
-          </ScrollView>
-        ))}
-      </SwiperFlatList>
-
-      {/* ✅ PREV / NEXT BUTTONS */}
-      <View
-        style={{
-          position: "absolute",
-          top: "50%",
-          width: "100%",
-          flexDirection: "row",
-          justifyContent: "space-between",
-          paddingHorizontal: 20,
-        }}
-      >
+      {/* PREV / NEXT BUTTONS */}
+      <View style={styles.controls}>
         <TouchableOpacity
-          onPress={goPrev}
+          onPress={onPrev}
           disabled={currentIndex === 0}
-          style={{
-            backgroundColor: "rgba(0,0,0,0.5)",
-            paddingVertical: 10,
-            paddingHorizontal: 14,
-            borderRadius: 30,
-            opacity: currentIndex === 0 ? 0.2 : 1,
-          }}
+          style={[styles.navBtn, currentIndex === 0 && { opacity: 0.3 }]}
         >
           <Ionicons name="chevron-back" size={28} color="#fff" />
         </TouchableOpacity>
 
         <TouchableOpacity
-          onPress={goNext}
+          onPress={onNext}
           disabled={currentIndex === pages.length - 1}
-          style={{
-            backgroundColor: "rgba(0,0,0,0.5)",
-            paddingVertical: 10,
-            paddingHorizontal: 14,
-            borderRadius: 30,
-            opacity: currentIndex === pages.length - 1 ? 0.2 : 1,
-          }}
+          style={[styles.navBtn, currentIndex === pages.length - 1 && { opacity: 0.3 }]}
         >
           <Ionicons name="chevron-forward" size={28} color="#fff" />
         </TouchableOpacity>
       </View>
 
-      {/* ✅ FIXED PAGE INDICATOR */}
-      <View
-        style={{
-          position: "absolute",
-          bottom: 20,
-          left: 0,
-          right: 0,
-          justifyContent: "center",
-          alignItems: "center",
-          zIndex: 50,
-        }}
-      >
-        <View
-          style={{
-            backgroundColor: darkMode
-              ? "rgba(255,255,255,0.15)"
-              : "rgba(0,0,0,0.25)",
-            paddingHorizontal: 16,
-            paddingVertical: 6,
-            borderRadius: 20,
-          }}
-        >
-          <Text
-            style={{
-              color: darkMode ? "#fff" : "#000",
-              fontSize: 16,
-              fontWeight: "700",
-            }}
-          >
+      {/* PAGE INDICATOR */}
+      <View style={styles.pageIndicatorWrap}>
+        <View style={[styles.pageIndicator, { backgroundColor: darkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.25)" }]}>
+          <Text style={{ color: darkMode ? "#fff" : "#000", fontSize: 16, fontWeight: "700" }}>
             {currentIndex + 1} / {pages.length}
           </Text>
         </View>
       </View>
 
-      {/* ✅ DOWNLOAD POPUP */}
-      <Modal
-        visible={showDownloadPopup}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowDownloadPopup(false)}
-      >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.4)",
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-        >
-          <View
-            style={{
-              backgroundColor: "white",
-              width: "60%",
-              borderRadius: 12,
-              paddingVertical: 20,
-              paddingHorizontal: 10,
-              elevation: 5,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 18,
-                fontWeight: "600",
-                textAlign: "center",
-                marginBottom: 15,
-              }}
-            >
-              Download Options
-            </Text>
+      {/* DOWNLOAD POPUP */}
+      <Modal visible={showDownloadPopup} transparent animationType="fade" onRequestClose={() => setShowDownloadPopup(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Download Options</Text>
 
             {pdfUrl && (
-              <Pressable
-                onPress={() => handleDownload("pdf")}
-                style={{
-                  paddingVertical: 12,
-                  borderBottomWidth: 1,
-                  borderBottomColor: "#ddd",
-                }}
-              >
-                <Text style={{ fontSize: 16, textAlign: "center" }}>
-                  📄 Download PDF
-                </Text>
+              <Pressable onPress={() => handleDownload("pdf")} style={styles.modalRow}>
+                <Text style={styles.modalRowText}>📄 Download PDF</Text>
               </Pressable>
             )}
 
             {epubUrl && (
-              <Pressable
-                onPress={() => handleDownload("epub")}
-                style={{
-                  paddingVertical: 12,
-                  borderBottomWidth: 1,
-                  borderBottomColor: "#ddd",
-                }}
-              >
-                <Text style={{ fontSize: 16, textAlign: "center" }}>
-                  📘 Download EPUB
-                </Text>
+              <Pressable onPress={() => handleDownload("epub")} style={styles.modalRow}>
+                <Text style={styles.modalRowText}>📘 Download EPUB</Text>
               </Pressable>
             )}
 
-            <Pressable
-              onPress={() => setShowDownloadPopup(false)}
-              style={{ paddingVertical: 12 }}
-            >
-              <Text
-                style={{ fontSize: 16, textAlign: "center", color: "red" }}
-              >
-                Cancel
-              </Text>
+            <Pressable onPress={() => setShowDownloadPopup(false)} style={styles.modalRow}>
+              <Text style={[styles.modalRowText, { color: "red" }]}>Cancel</Text>
             </Pressable>
           </View>
         </View>
@@ -557,3 +536,68 @@ const logReadingTime = async () => {
     </SafeAreaView>
   );
 }
+
+/* ==================== STYLES ==================== */
+const styles = StyleSheet.create({
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingLeft: "6%",
+    paddingRight: "6%",
+    paddingVertical: 10,
+  },
+  title: { fontSize: 18, fontWeight: "600", maxWidth: width * 0.4 },
+  langPicker: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 8,
+    width: 160,
+    overflow: "hidden",
+  },
+  controls: {
+    position: "absolute",
+    top: "50%",
+    width: "100%",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+  },
+  navBtn: {
+    backgroundColor: "rgba(0,0,0,0.5)",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 30,
+  },
+  pageIndicatorWrap: {
+    position: "absolute",
+    bottom: 20,
+    left: 0,
+    right: 0,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  pageIndicator: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalBox: {
+    backgroundColor: "white",
+    width: Platform.OS === "web" ? "40%" : "80%",
+    borderRadius: 12,
+    paddingVertical: 20,
+    paddingHorizontal: 10,
+    elevation: 5,
+  },
+  modalTitle: { fontSize: 18, fontWeight: "600", textAlign: "center", marginBottom: 10 },
+  modalRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#eee" },
+  modalRowText: { fontSize: 16, textAlign: "center" },
+});

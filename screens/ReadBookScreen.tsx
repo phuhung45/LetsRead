@@ -19,20 +19,12 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
   Switch,
+  ScrollView,
   StyleSheet,
 } from "react-native";
 import { supabase } from "../lib/supabase";
 
 const { width, height } = Dimensions.get("window");
-
-/**
- * ReadBookScreen — optimized for mobile:
- * - FlatList paging (stable)
- * - Accumulator timer to prevent overcounting
- * - Minimal network calls (only when adding 1 minute or progress changes)
- * - Reset accumulator on manual navigation / swipe
- * - Safer image sizing to avoid OOM
- */
 
 export default function ReadBookScreen() {
   const params = useLocalSearchParams();
@@ -52,14 +44,10 @@ export default function ReadBookScreen() {
   const [showDownloadPopup, setShowDownloadPopup] = useState(false);
 
   const flatRef = useRef<FlatList<any> | null>(null);
+  const pageScrollRefs = useRef([]);
 
-  /* ---------------------------- FETCH BOOK DATA ---------------------------- */
+  /* ========== FETCH DATA ========== */
   useEffect(() => {
-    if (!cleanBookUuid) {
-      setLoading(false);
-      return;
-    }
-
     let mounted = true;
 
     const fetchBookData = async () => {
@@ -71,29 +59,14 @@ export default function ReadBookScreen() {
           .select("pdf_url, epub_url, title")
           .eq("book_id", cleanBookUuid)
           .eq("language_id", selectedLang)
-          .limit(1)
           .maybeSingle();
 
-        if (!bookInfoData) {
-          const { data: fallbackBook } = await supabase
-            .from("book_content")
-            .select("pdf_url, epub_url, title")
-            .eq("book_id", cleanBookUuid)
-            .limit(1)
-            .maybeSingle();
+        const info = bookInfoData;
 
-          if (!mounted) return;
-          setPdfUrl(fallbackBook?.pdf_url || null);
-          setEpubUrl(fallbackBook?.epub_url || null);
-          setBookTitle(fallbackBook?.title || "Untitled");
-        } else {
-          if (!mounted) return;
-          setPdfUrl(bookInfoData.pdf_url || null);
-          setEpubUrl(bookInfoData.epub_url || null);
-          setBookTitle(bookInfoData.title || "Untitled");
-        }
+        setPdfUrl(info?.pdf_url || null);
+        setEpubUrl(info?.epub_url || null);
+        setBookTitle(info?.title || "Untitled");
 
-        // pages (limit reasonable to avoid giant payload)
         const { data } = await supabase
           .from("book_content_page")
           .select("book_uuid, language_id, page, image, content_value")
@@ -101,310 +74,94 @@ export default function ReadBookScreen() {
           .eq("language_id", selectedLang)
           .order("page");
 
-        let pagesData = data || [];
-
-        if ((!pagesData || pagesData.length === 0) && mounted) {
-          const { data: fallbackData } = await supabase
-            .from("book_content_page")
-            .select("book_uuid, language_id, page, image, content_value")
-            .eq("book_uuid", cleanBookUuid)
-            .order("page")
-            .limit(200);
-
-          pagesData = fallbackData || [];
-        }
-
-        if (mounted) setPages(pagesData || []);
-      } catch (e) {
-        console.error("fetchBookData error:", e);
+        setPages(data || []);
       } finally {
-        if (mounted) setLoading(false);
+        setLoading(false);
       }
     };
 
     const fetchLanguages = async () => {
-      try {
-        const { data } = await supabase
-          .from("book_content_page")
-          .select("language_id")
-          .eq("book_uuid", cleanBookUuid);
+      const { data } = await supabase
+        .from("book_content_page")
+        .select("language_id")
+        .eq("book_uuid", cleanBookUuid);
 
-        const uniqueIds = Array.from(new Set(data?.map((d) => d.language_id)));
+      const uniqueIds = Array.from(new Set(data?.map((d) => d.language_id)));
 
-        if (uniqueIds.length > 0) {
-          const { data: langs } = await supabase
-            .from("languages")
-            .select("id, name")
-            .in("id", uniqueIds);
+      const { data: langs } = await supabase
+        .from("languages")
+        .select("id, name")
+        .in("id", uniqueIds);
 
-          if (mounted) setLanguages(langs || []);
-        }
-      } catch (e) {
-        console.error("fetchLanguages error:", e);
-      }
+      setLanguages(langs || []);
     };
 
     fetchLanguages();
     fetchBookData();
 
-    return () => {
-      mounted = false;
-    };
+    return () => (mounted = false);
   }, [cleanBookUuid, selectedLang]);
 
-  /* ---------------------------- CLEAN HTML ---------------------------- */
+  /* ========== CLEAN HTML ========== */
   const cleanHTML = (html: string) =>
     decode(
       html
         .replace(/<br\s*\/?>/gi, "\n")
-        .replace(/<i>(.*?)<\/i>/gi, "_$1_")
-        .replace(/<small>(.*?)<\/small>/gi, "$1")
-        .replace(/&nbsp;/g, " ")
         .replace(/<\/?[^>]+(>|$)/g, "")
         .trim()
     );
 
-  /* ---------------------------- ACCUMULATOR REALTIME (NO OVERCOUNT) ---------------------------- */
+  /* ========== RENDER PAGE ========== */
+  const renderPage = ({ item, index }) => {
+    const imageHeight = Math.min(height * 0.5, 1200);
 
-  // lastTick: timestamp of previous tick
-  const lastTick = useRef<number>(Date.now());
-  // elapsedMs: accumulated ms since last full minute consumed
-  const elapsedMs = useRef<number>(0);
-  // readingActive: allows pausing accumulation if needed
-  const readingActive = useRef<boolean>(true);
-  // ensure we don't run multiple concurrent addOneMinute
-  const addingLock = useRef<boolean>(false);
-
-  // 5s tick — triggers accumulation logic. 5s chosen to reduce throttling issues on RN
-  useEffect(() => {
-    lastTick.current = Date.now();
-    elapsedMs.current = 0;
-
-    const tick = setInterval(() => {
-      handleRealtimeTick();
-    }, 5000);
-
-    return () => {
-      clearInterval(tick);
-      // flush any full minutes on unmount/book change
-      flushAccumulator();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cleanBookUuid]); // reset when book changes
-
-  const handleRealtimeTick = async () => {
-    if (!readingActive.current) {
-      lastTick.current = Date.now();
-      return;
-    }
-
-    const now = Date.now();
-    const delta = now - lastTick.current;
-    lastTick.current = now;
-    elapsedMs.current += delta;
-
-    // consume whole minute chunks
-    while (elapsedMs.current >= 60000) {
-      // if an add is already running, break to avoid concurrent upserts
-      if (addingLock.current) break;
-      elapsedMs.current -= 60000;
-      await addOneMinute();
-    }
-  };
-
-  const flushAccumulator = async () => {
-    // consume any full minutes
-    while (elapsedMs.current >= 60000) {
-      elapsedMs.current -= 60000;
-      await addOneMinute();
-    }
-  };
-
-  const addOneMinute = async () => {
-    if (addingLock.current) return;
-    addingLock.current = true;
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        addingLock.current = false;
-        return;
-      }
-
-      const today = new Date().toISOString().split("T")[0];
-
-      // fetch existing minutes safely
-      const { data: existing } = await supabase
-        .from("reading_logs")
-        .select("minutes_read")
-        .eq("user_id", user.id)
-        .eq("book_uuid", cleanBookUuid)
-        .eq("date", today)
-        .maybeSingle();
-
-      const current = existing?.minutes_read ?? 0;
-      const newTotal = current + 1;
-
-      // minimal upsert payload
-      await supabase.from("reading_logs").upsert(
-        {
-          user_id: user.id,
-          book_uuid: cleanBookUuid,
-          date: today,
-          minutes_read: newTotal,
-          last_read_at: new Date().toISOString(),
-          // do not send created_at — DB should default it
-        },
-        { onConflict: ["user_id", "book_uuid", "date"] }
-      );
-
-      console.log(`🕒 +1 minute -> total=${newTotal}`);
-    } catch (e) {
-      console.error("addOneMinute error:", e);
-    } finally {
-      addingLock.current = false;
-    }
-  };
-
-  /* ---------------------------- READING PROGRESS ---------------------------- */
-
-  const updateUserReadingProgress = async (progress: number) => {
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data: existing } = await supabase
-        .from("user_reads")
-        .select("progress")
-        .eq("user_id", user.id)
-        .eq("book_id", cleanBookUuid)
-        .maybeSingle();
-
-      const currentProgress = existing?.progress ?? 0;
-      if (currentProgress === 1) return;
-      if (progress <= currentProgress) return;
-
-      await supabase.from("user_reads").upsert(
-        {
-          user_id: user.id,
-          book_id: cleanBookUuid,
-          progress,
-          last_read_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id,book_id" }
-      );
-    } catch (e) {
-      console.log("reading progress error:", e);
-    }
-  };
-
-  /* ---------------------------- NAVIGATION HANDLERS ---------------------------- */
-
-  const goToIndex = async (index: number) => {
-    if (!pages || pages.length === 0) return;
-    const clamped = Math.max(0, Math.min(index, pages.length - 1));
-    flatRef.current?.scrollToIndex({ index: clamped, animated: true });
-    setCurrentIndex(clamped);
-  };
-
-  const onNext = async () => {
-    if (currentIndex < pages.length - 1) {
-      const nextIndex = currentIndex + 1;
-      await goToIndex(nextIndex);
-
-      const progress =
-        nextIndex + 1 >= pages.length ? 1 : (nextIndex + 1) / pages.length;
-
-      // reset accumulator when user manually navigates pages
-      lastTick.current = Date.now();
-      elapsedMs.current = 0;
-
-      await updateUserReadingProgress(progress);
-    } else {
-      // finished
-      lastTick.current = Date.now();
-      elapsedMs.current = 0;
-      await updateUserReadingProgress(1);
-    }
-  };
-
-  const onPrev = () => {
-    if (currentIndex > 0) {
-      const prevIndex = currentIndex - 1;
-      flatRef.current?.scrollToIndex({ index: prevIndex, animated: true });
-      setCurrentIndex(prevIndex);
-      // reset accumulator
-      lastTick.current = Date.now();
-      elapsedMs.current = 0;
-    }
-  };
-
-  /* ---------------------------- DOWNLOAD ---------------------------- */
-
-  const openDownloadPopup = () => {
-    if (!pdfUrl && !epubUrl) return;
-    setShowDownloadPopup(true);
-  };
-
-  const handleDownload = async (type: "pdf" | "epub") => {
-    setShowDownloadPopup(false);
-    const fileUrl = type === "pdf" ? pdfUrl : epubUrl;
-    if (fileUrl) Linking.openURL(fileUrl);
-  };
-
-  /* ---------------------------- FLATLIST ITEM RENDERER ---------------------------- */
-
-  const renderPage = ({ item, index }: { item: any; index: number }) => {
-    // scale image down to device width to avoid OOM
-    const imageHeight = Math.min(height * 0.5, 1200); // cap height
     return (
-      <View style={{ width, alignItems: "center", padding: 20 }}>
-        {item.image && (
-          <Image
-            source={{ uri: item.image }}
-            style={{
-              width,
-              height: imageHeight,
-              resizeMode: "contain",
-              marginBottom: 20,
-              backgroundColor: "#f6f6f6",
-            }}
-            // react-native-web ignores defaultSource; keep minimal props
-          />
-        )}
-
-        <Text
-          style={{
-            fontSize: 22,
-            lineHeight: 28,
-            textAlign: "justify",
-            color: darkMode ? "#f1f1f1" : "#111",
-            paddingHorizontal: Math.min(24, width * 0.05),
+      <View style={{ width }}>
+        <ScrollView
+          ref={(ref) => (pageScrollRefs.current[index] = ref)}
+          style={{ flex: 1 }}
+          contentContainerStyle={{
+            padding: 20,
+            paddingBottom: 160,
+            alignItems: "center",
           }}
+          showsVerticalScrollIndicator={false}
         >
-          {cleanHTML(item.content_value || "")}
-        </Text>
+          {item.image && (
+            <Image
+              source={{ uri: item.image }}
+              style={{
+                width,
+                height: imageHeight,
+                resizeMode: "contain",
+                marginBottom: 20,
+              }}
+            />
+          )}
+
+          <Text
+            style={{
+              fontSize: 22,
+              lineHeight: 28,
+              textAlign: "justify",
+              color: darkMode ? "#f1f1f1" : "#111",
+              paddingHorizontal: Math.min(24, width * 0.05),
+            }}
+          >
+            {cleanHTML(item.content_value || "")}
+          </Text>
+        </ScrollView>
       </View>
     );
   };
 
-  const handleMomentumScrollEnd = async (
-    e: NativeSyntheticEvent<NativeScrollEvent>
-  ) => {
-    const offsetX = e.nativeEvent.contentOffset.x;
-    const idx = Math.round(offsetX / width);
-    if (idx !== currentIndex) {
-      setCurrentIndex(idx);
-      // reset accumulator when user swipes
-      lastTick.current = Date.now();
-      elapsedMs.current = 0;
-    }
+  /* ========== HANDLE PAGE SWIPE ========== */
+  const handleMomentumScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const idx = Math.round(e.nativeEvent.contentOffset.x / width);
+    if (idx !== currentIndex) setCurrentIndex(idx);
   };
 
-  /* ---------------------------- RENDER UI ---------------------------- */
+  /* ========== RENDER UI ========== */
 
   if (loading)
     return (
@@ -427,23 +184,30 @@ export default function ReadBookScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor }}>
       {/* HEADER */}
-      <View style={[styles.header, { backgroundColor: darkMode ? "#222" : "#f0f0f0" }]}>
+      <View
+        style={[styles.header, { backgroundColor: darkMode ? "#222" : "#f0f0f0" }]}
+      >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <TouchableOpacity onPress={() => router.replace('/')}>
+          <TouchableOpacity onPress={() => router.replace("/")}>
             <Ionicons name="arrow-back" size={26} color={textColor} />
           </TouchableOpacity>
 
-          <Text numberOfLines={1} style={[styles.title, { color: textColor }]}>
-            {bookTitle || "Book"}
+          <Text style={[styles.title, { color: textColor }]} numberOfLines={1}>
+            {bookTitle}
           </Text>
         </View>
 
         <View style={{ flex: 1, alignItems: "center" }}>
-          <View style={[styles.langPicker, { backgroundColor: darkMode ? "#333" : "#fff" }]}>
+          <View
+            style={[
+              styles.langPicker,
+              { backgroundColor: darkMode ? "#333" : "#fff" },
+            ]}
+          >
             <Picker
               selectedValue={selectedLang}
               style={{ width: "100%", height: 38, color: textColor }}
-              onValueChange={(value) => setSelectedLang(value)}
+              onValueChange={(v) => setSelectedLang(v)}
             >
               {languages.map((lang) => (
                 <Picker.Item key={lang.id} label={lang.name} value={lang.id} />
@@ -454,15 +218,15 @@ export default function ReadBookScreen() {
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Switch value={darkMode} onValueChange={setDarkMode} />
-          <TouchableOpacity onPress={openDownloadPopup}>
-            <Text style={{ fontSize: 20, color: "green" }}>Download ⬇️</Text>
+          <TouchableOpacity onPress={() => setShowDownloadPopup(true)}>
+            <Text style={{ fontSize: 18, color: "green" }}>⬇️</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* FLATLIST PAGING */}
+      {/* FLATLIST */}
       <FlatList
-        ref={(r) => (flatRef.current = r)}
+        ref={flatRef}
         horizontal
         pagingEnabled
         data={pages}
@@ -471,63 +235,96 @@ export default function ReadBookScreen() {
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={handleMomentumScrollEnd}
         initialScrollIndex={currentIndex}
-        getItemLayout={(_, index) => ({
+        getItemLayout={(_, i) => ({
           length: width,
-          offset: width * index,
-          index,
+          offset: width * i,
+          index: i,
         })}
         windowSize={3}
         maxToRenderPerBatch={2}
-        removeClippedSubviews
       />
-
-      {/* PREV / NEXT BUTTONS */}
-      <View style={styles.controls}>
-        <TouchableOpacity
-          onPress={onPrev}
-          disabled={currentIndex === 0}
-          style={[styles.navBtn, currentIndex === 0 && { opacity: 0.3 }]}
-        >
-          <Ionicons name="chevron-back" size={28} color="#fff" />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={onNext}
-          disabled={currentIndex === pages.length - 1}
-          style={[styles.navBtn, currentIndex === pages.length - 1 && { opacity: 0.3 }]}
-        >
-          <Ionicons name="chevron-forward" size={28} color="#fff" />
-        </TouchableOpacity>
-      </View>
 
       {/* PAGE INDICATOR */}
       <View style={styles.pageIndicatorWrap}>
-        <View style={[styles.pageIndicator, { backgroundColor: darkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.25)" }]}>
-          <Text style={{ color: darkMode ? "#fff" : "#000", fontSize: 16, fontWeight: "700" }}>
+        <View
+          style={[
+            styles.pageIndicator,
+            { backgroundColor: darkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.25)" },
+          ]}
+        >
+          <Text
+            style={{
+              color: darkMode ? "#fff" : "#000",
+              fontSize: 16,
+              fontWeight: "700",
+            }}
+          >
             {currentIndex + 1} / {pages.length}
           </Text>
         </View>
       </View>
 
+      {/* PREV BUTTON - LEFT SIDE */}
+      <TouchableOpacity
+        style={[styles.sideNavBtn, { left: 10 }]}
+        disabled={currentIndex === 0}
+        onPress={() => {
+          if (currentIndex > 0) {
+            flatRef.current?.scrollToIndex({
+              index: currentIndex - 1,
+              animated: true,
+            });
+            setCurrentIndex(currentIndex - 1);
+          }
+        }}
+      >
+        <Ionicons name="chevron-back" size={30} color="#fff" />
+      </TouchableOpacity>
+
+      {/* NEXT BUTTON - RIGHT SIDE */}
+      <TouchableOpacity
+        style={[styles.sideNavBtn, { right: 10 }]}
+        disabled={currentIndex === pages.length - 1}
+        onPress={() => {
+          if (currentIndex < pages.length - 1) {
+            flatRef.current?.scrollToIndex({
+              index: currentIndex + 1,
+              animated: true,
+            });
+            setCurrentIndex(currentIndex + 1);
+          }
+        }}
+      >
+        <Ionicons name="chevron-forward" size={30} color="#fff" />
+      </TouchableOpacity>
+
       {/* DOWNLOAD POPUP */}
-      <Modal visible={showDownloadPopup} transparent animationType="fade" onRequestClose={() => setShowDownloadPopup(false)}>
+      <Modal
+        visible={showDownloadPopup}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDownloadPopup(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>Download Options</Text>
 
             {pdfUrl && (
-              <Pressable onPress={() => handleDownload("pdf")} style={styles.modalRow}>
-                <Text style={styles.modalRowText}>📄 Download PDF</Text>
+              <Pressable onPress={() => Linking.openURL(pdfUrl)} style={styles.modalRow}>
+                <Text style={styles.modalRowText}>📄 PDF</Text>
               </Pressable>
             )}
 
             {epubUrl && (
-              <Pressable onPress={() => handleDownload("epub")} style={styles.modalRow}>
-                <Text style={styles.modalRowText}>📘 Download EPUB</Text>
+              <Pressable onPress={() => Linking.openURL(epubUrl)} style={styles.modalRow}>
+                <Text style={styles.modalRowText}>📘 EPUB</Text>
               </Pressable>
             )}
 
-            <Pressable onPress={() => setShowDownloadPopup(false)} style={styles.modalRow}>
+            <Pressable
+              onPress={() => setShowDownloadPopup(false)}
+              style={styles.modalRow}
+            >
               <Text style={[styles.modalRowText, { color: "red" }]}>Cancel</Text>
             </Pressable>
           </View>
@@ -537,9 +334,10 @@ export default function ReadBookScreen() {
   );
 }
 
-/* ==================== STYLES ==================== */
+/* ========== STYLES ========== */
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
+
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -548,7 +346,9 @@ const styles = StyleSheet.create({
     paddingRight: "6%",
     paddingVertical: 10,
   },
+
   title: { fontSize: 18, fontWeight: "600", maxWidth: width * 0.4 },
+
   langPicker: {
     borderWidth: 1,
     borderColor: "#ccc",
@@ -556,26 +356,12 @@ const styles = StyleSheet.create({
     width: 160,
     overflow: "hidden",
   },
-  controls: {
-    position: "absolute",
-    top: "50%",
-    width: "100%",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-  },
-  navBtn: {
-    backgroundColor: "rgba(0,0,0,0.5)",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 30,
-  },
+
   pageIndicatorWrap: {
     position: "absolute",
-    bottom: 20,
+    bottom: 24,
     left: 0,
     right: 0,
-    justifyContent: "center",
     alignItems: "center",
   },
   pageIndicator: {
@@ -583,6 +369,17 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
   },
+
+  /* === NEW NEXT/PREV BUTTONS ON LEFT/RIGHT === */
+  sideNavBtn: {
+    position: "absolute",
+    top: "50%",
+    transform: [{ translateY: -25 }],
+    backgroundColor: "rgba(0,0,0,0.45)",
+    padding: 12,
+    borderRadius: 30,
+  },
+
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
@@ -595,7 +392,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 20,
     paddingHorizontal: 10,
-    elevation: 5,
   },
   modalTitle: { fontSize: 18, fontWeight: "600", textAlign: "center", marginBottom: 10 },
   modalRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#eee" },

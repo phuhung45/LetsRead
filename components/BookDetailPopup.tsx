@@ -10,7 +10,7 @@ import {
   Alert,
   StyleSheet,
   Linking,
-  TouchableWithoutFeedback,
+  Pressable,
 } from "react-native";
 import { Picker } from "@react-native-picker/picker";
 import { supabase } from "../lib/supabase";
@@ -41,12 +41,11 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
   const [languagesList, setLanguagesList] = useState<{ id: string; name: string }[]>([]);
   const [isFavorite, setIsFavorite] = useState(false);
-  const [bookCache, setBookCache] = useState<Record<string, any>>({}); // ✅ cache theo language_id
+  const [bookCache, setBookCache] = useState<Record<string, any>>({});
 
   const fetchBookByLanguage = async (language_id: string) => {
     if (!bookId) return;
 
-    // ✅ Cache hit — không cần fetch lại
     if (bookCache[language_id]) {
       setBook(bookCache[language_id]);
       return;
@@ -54,8 +53,7 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
 
     setLoading(true);
     try {
-      // Chạy 2 truy vấn song song
-      const [{ data: bookData, error: bookError }, { data: catRel }] = await Promise.all([
+      const [{ data: bookData }, { data: catRel }] = await Promise.all([
         supabase
           .from("books")
           .select("*")
@@ -65,7 +63,6 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
         supabase.from("book_categories").select("category_id").eq("book_id", bookId),
       ]);
 
-      if (bookError) throw bookError;
       if (!bookData) {
         setBook(null);
         return;
@@ -73,6 +70,7 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
 
       const catIds = catRel?.map((c: any) => c.category_id) ?? [];
       let categories: string[] = [];
+
       if (catIds.length > 0) {
         const { data: catNames } = await supabase
           .from("categories")
@@ -82,24 +80,24 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
       }
 
       const bookResult = { ...bookData, categories };
-      setBook(bookResult);
 
-      // ✅ Lưu cache
+      setBook(bookResult);
       setBookCache((prev) => ({ ...prev, [language_id]: bookResult }));
-    } catch (err) {
-      Alert.alert("Lỗi tải dữ liệu", "Không thể tải chi tiết sách.");
+    } catch {
+      Alert.alert("Lỗi", "Không thể tải dữ liệu sách.");
     } finally {
       setLoading(false);
     }
   };
 
+  /* Load languages + default book */
   useEffect(() => {
     if (!visible || !bookId) {
       setBook(null);
       setLanguagesList([]);
       setSelectedLanguage(null);
-      setIsFavorite(false);
       setBookCache({});
+      setIsFavorite(false);
       return;
     }
 
@@ -123,11 +121,7 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
         if (defaultLang) {
           setSelectedLanguage(defaultLang);
           await fetchBookByLanguage(defaultLang);
-        } else {
-          setBook(null);
         }
-      } catch (err) {
-        Alert.alert("Lỗi tải dữ liệu", "Không thể tải chi tiết sách.");
       } finally {
         setLoading(false);
       }
@@ -136,37 +130,39 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
     fetchLanguages();
   }, [visible, bookId]);
 
+  /* Change language */
   useEffect(() => {
-    if (selectedLanguage && bookId) {
+    if (visible && selectedLanguage) {
       fetchBookByLanguage(selectedLanguage);
     }
   }, [selectedLanguage]);
 
+  /* Favorite */
   useEffect(() => {
     const checkFavorite = async () => {
       const { data: user } = await supabase.auth.getUser();
       const userId = user?.user?.id;
       if (!userId || !bookId) return;
 
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("user_favorites")
         .select("id")
         .eq("book_id", bookId)
         .eq("user_id", userId)
         .maybeSingle();
 
-      if (!error && data) setIsFavorite(true);
-      else setIsFavorite(false);
+      setIsFavorite(!!data);
     };
-    checkFavorite();
-  }, [bookId]);
+
+    if (visible) checkFavorite();
+  }, [visible]);
 
   const handleAddFavorite = async () => {
     const { data: user } = await supabase.auth.getUser();
     const userId = user?.user?.id;
 
     if (!userId) {
-      Alert.alert("Thông báo", "Bạn cần đăng nhập để thêm yêu thích.");
+      Alert.alert("Thông báo", "Bạn cần đăng nhập.");
       return;
     }
 
@@ -174,41 +170,28 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
 
     try {
       if (isFavorite) {
-        const { error } = await supabase
+        await supabase
           .from("user_favorites")
           .delete()
           .eq("book_id", bookId)
           .eq("user_id", userId);
-        if (error) throw error;
+
         setIsFavorite(false);
       } else {
-        const { data: existing } = await supabase
-          .from("user_favorites")
-          .select("id")
-          .eq("book_id", bookId)
-          .eq("user_id", userId)
-          .maybeSingle();
-
-        if (!existing) {
-          const { error } = await supabase.from("user_favorites").insert([
-            {
-              user_id: userId,
-              book_id: bookId,
-              created_at: new Date().toISOString(),
-            },
-          ]);
-          if (error) throw error;
-        }
+        await supabase.from("user_favorites").insert([
+          { user_id: userId, book_id: bookId, created_at: new Date().toISOString() },
+        ]);
         setIsFavorite(true);
       }
-    } catch (err) {
-      Alert.alert("Lỗi", "Không thể cập nhật danh sách yêu thích.");
+    } catch {
+      Alert.alert("Lỗi", "Không thể cập nhật yêu thích.");
     }
   };
 
   const handleRead = () => {
     if (!book || !selectedLanguage) return;
-    onClose?.();
+
+    onClose();
     setTimeout(() => {
       router.push({
         pathname: `/read/${book.book_uuid}`,
@@ -218,173 +201,148 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
   };
 
   const handleDownload = async () => {
-    if (!book?.book_uuid || !selectedLanguage) {
-      Alert.alert("Lỗi", "Thiếu thông tin sách hoặc ngôn ngữ.");
-      return;
-    }
+    if (!book || !selectedLanguage) return;
 
-    try {
-      const langIdNum = Number(selectedLanguage);
-      const { data: content, error } = await supabase
-        .from("book_content")
-        .select("pdf_url, epub_url")
-        .eq("book_id", book.book_uuid)
-        .eq("language_id", langIdNum)
-        .maybeSingle();
+    const { data } = await supabase
+      .from("book_content")
+      .select("pdf_url, epub_url")
+      .eq("book_id", book.book_uuid)
+      .eq("language_id", selectedLanguage)
+      .maybeSingle();
 
-      if (error) throw error;
+    if (data?.pdf_url) return Linking.openURL(data.pdf_url);
+    if (data?.epub_url) return Linking.openURL(data.epub_url);
 
-      if (content?.pdf_url) return Linking.openURL(content.pdf_url);
-      if (content?.epub_url) return Linking.openURL(content.epub_url);
-
-      Alert.alert("Không tìm thấy file PDF/EPUB nào");
-    } catch (err) {
-      Alert.alert("Lỗi tải xuống", "Không thể lấy link file.");
-    }
+    Alert.alert("Không có file để tải");
   };
 
-  if (!visible || !bookId) return null;
+  if (!visible) return null;
+
   const displayBook = book || {};
 
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.overlay}>
-          <TouchableWithoutFeedback>
-            <View style={styles.popupContainer}>
-              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                <Text style={styles.closeButtonText}>✕</Text>
-              </TouchableOpacity>
+      <View style={styles.overlay}>
+        {/* ✅ BACKDROP CLICK (KHÔNG CHẶN SCROLL) */}
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
 
-              {loading ? (
-                <View style={styles.loadingView}>
-                  <ActivityIndicator size="large" color="#4CAF50" />
-                  <Text style={styles.loadingText}>Đang tải dữ liệu...</Text>
-                </View>
-              ) : !book ? (
-                <View style={styles.errorView}>
-                  <View style={styles.placeholderImage} />
-                  <Text style={styles.errorText}>
-                    Không tìm thấy thông tin sách cho ID: {bookId}.
-                  </Text>
-                  <TouchableOpacity onPress={onClose} style={styles.errorCloseButton}>
-                    <Text style={styles.errorCloseButtonText}>Đóng</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <ScrollView contentContainerStyle={styles.scrollViewContent}>
-                  <View style={styles.coverWrap}>
-                    <Image
-                      source={{ uri: displayBook.cover_image }}
-                      style={styles.coverImage}
-                      resizeMode="cover"
-                    />
-                  </View>
+        {/* ✅ POPUP KHÔNG BỊ BLOCK GESTURE */}
+        <View style={styles.popupContainer}>
+          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+            <Text style={styles.closeButtonText}>✕</Text>
+          </TouchableOpacity>
 
-                  <Text style={styles.title}>{displayBook.title}</Text>
-                  <Text style={styles.author}>{displayBook.author}</Text>
-
-                  <View style={styles.langRow}>
-                    <View style={styles.pickerWrapper}>
-                      <Picker
-                        selectedValue={selectedLanguage}
-                        onValueChange={(v) => setSelectedLanguage(v)}
-                        style={styles.languagePicker}
-                        dropdownIconColor="#333"
-                      >
-                        {languagesList.map((lang) => (
-                          <Picker.Item key={lang.id} label={lang.name} value={lang.id} />
-                        ))}
-                      </Picker>
-                    </View>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.favoriteButton,
-                        { backgroundColor: isFavorite ? "#11813a" : "#f5f5f5" },
-                      ]}
-                      onPress={handleAddFavorite}
-                    >
-                      <Text
-                        style={[
-                          styles.favoriteButtonText,
-                          { color: isFavorite ? "#11813a" : "#888" },
-                        ]}
-                      >
-                        ❤️
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={styles.readDownloadRow}>
-                    <TouchableOpacity style={styles.readButton} onPress={handleRead}>
-                      <Text style={styles.readButtonText}>📖 Read</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.downloadButton} onPress={handleDownload}>
-                      <Text style={styles.downloadButtonText}>⬇</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <Text style={styles.bookDescription}>
-                    {displayBook.description || "Không có mô tả."}
-                  </Text>
-
-                  <View style={styles.statsContainer}>
-                    <View style={styles.statBox}>
-                      <Text style={styles.statLabel}>Reading Level</Text>
-                      <Text style={styles.statValue}>
-                        {displayBook.reading_level || "-"}
-                      </Text>
-                    </View>
-                    <View style={[styles.statBox, styles.statBoxBorder]}>
-                      <Text style={styles.statLabel}>Pages</Text>
-                      <Text style={styles.statValue}>{displayBook.pages || "-"}</Text>
-                    </View>
-                    <View style={styles.statBox}>
-                      <Text style={styles.statLabel}>Available Languages</Text>
-                      <Text style={styles.statValue}>
-                        {languagesList?.length || "-"}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.detailsContainer}>
-                    <View style={styles.hr} />
-                    <InfoItem label="Publisher" value={displayBook.publisher} />
-                    <View style={styles.hr} />
-                    <InfoItem label="Illustrator" value={displayBook.illustrator} />
-                    <View style={styles.hr} />
-                    <InfoItem
-                      label="Categories"
-                      value={displayBook.categories?.join(", ")}
-                    />
-                    <View style={styles.hr} />
-                    <InfoItem
-                      label="Source Language"
-                      value={displayBook.source_language}
-                    />
-                    <View style={styles.hr} />
-                    <InfoItem
-                      label="Country"
-                      value={displayBook.country_of_origin}
-                    />
-                    <View style={styles.hr} />
-                    <InfoItem label="Original URL" value={"Letsreadasia.org"} />
-                    <View style={styles.hr} />
-                    <InfoItem label="License" value={displayBook.license} />
-                    <View style={styles.hr} />
-                    <InfoItem label="Notes" value={displayBook.notes} />
-                    <View style={styles.hr} />
-                    <InfoItem label="Status" value={displayBook.status ?? "Complete"} />
-                  </View>
-
-                  <View style={{ height: 40 }} />
-                </ScrollView>
-              )}
+          {loading ? (
+            <View style={styles.loadingView}>
+              <ActivityIndicator size="large" color="#4CAF50" />
+              <Text style={styles.loadingText}>Đang tải dữ liệu...</Text>
             </View>
-          </TouchableWithoutFeedback>
+          ) : !book ? (
+            <View style={styles.errorView}>
+              <View style={styles.placeholderImage} />
+              <Text style={styles.errorText}>Không tìm thấy sách.</Text>
+              <TouchableOpacity onPress={onClose} style={styles.errorCloseButton}>
+                <Text style={styles.errorCloseButtonText}>Đóng</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={styles.scrollViewContent}>
+              <View style={styles.coverWrap}>
+                <Image source={{ uri: displayBook.cover_image }} style={styles.coverImage} />
+              </View>
+
+              <Text style={styles.title}>{displayBook.title}</Text>
+              <Text style={styles.author}>{displayBook.author}</Text>
+
+              {/* LANGUAGE + FAVORITE */}
+              <View style={styles.langRow}>
+                <View style={styles.pickerWrapper}>
+                  <Picker
+                    selectedValue={selectedLanguage}
+                    onValueChange={(v) => setSelectedLanguage(v)}
+                    style={styles.languagePicker}
+                    dropdownIconColor="#333"
+                  >
+                    {languagesList.map((lang) => (
+                      <Picker.Item key={lang.id} label={lang.name} value={lang.id} />
+                    ))}
+                  </Picker>
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.favoriteButton,
+                    { backgroundColor: isFavorite ? "#11813a" : "#f5f5f5" },
+                  ]}
+                  onPress={handleAddFavorite}
+                >
+                  <Text
+                    style={[
+                      styles.favoriteButtonText,
+                      { color: isFavorite ? "#11813a" : "#888" },
+                    ]}
+                  >
+                    ❤️
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* READ + DOWNLOAD */}
+              <View style={styles.readDownloadRow}>
+                <TouchableOpacity style={styles.readButton} onPress={handleRead}>
+                  <Text style={styles.readButtonText}>📖 Read</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.downloadButton} onPress={handleDownload}>
+                  <Text style={styles.downloadButtonText}>⬇</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.bookDescription}>
+                {displayBook.description || "Không có mô tả."}
+              </Text>
+
+              {/* STATS */}
+              <View style={styles.statsContainer}>
+                <View style={styles.statBox}>
+                  <Text style={styles.statLabel}>Reading Level</Text>
+                  <Text style={styles.statValue}>{displayBook.reading_level || "-"}</Text>
+                </View>
+
+                <View style={[styles.statBox, styles.statBoxBorder]}>
+                  <Text style={styles.statLabel}>Pages</Text>
+                  <Text style={styles.statValue}>{displayBook.pages || "-"}</Text>
+                </View>
+
+                <View style={styles.statBox}>
+                  <Text style={styles.statLabel}>Languages</Text>
+                  <Text style={styles.statValue}>{languagesList?.length || "-"}</Text>
+                </View>
+              </View>
+
+              {/* INFO SECTIONS */}
+              <View style={styles.detailsContainer}>
+                <View style={styles.hr} />
+                <InfoItem label="Publisher" value={displayBook.publisher} />
+                <View style={styles.hr} />
+                <InfoItem label="Illustrator" value={displayBook.illustrator} />
+                <View style={styles.hr} />
+                <InfoItem label="Categories" value={displayBook.categories?.join(", ")} />
+                <View style={styles.hr} />
+                <InfoItem label="Country" value={displayBook.country_of_origin} />
+                <View style={styles.hr} />
+                <InfoItem label="Source Language" value={displayBook.source_language} />
+                <View style={styles.hr} />
+                <InfoItem label="Status" value={displayBook.status ?? "Complete"} />
+                <View style={styles.hr} />
+                <InfoItem label="Notes" value={displayBook.notes} />
+              </View>
+
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          )}
         </View>
-      </TouchableWithoutFeedback>
+      </View>
     </Modal>
   );
 }

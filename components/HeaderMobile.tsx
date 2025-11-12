@@ -1,6 +1,6 @@
+import { Entypo, Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { View, Text, Image, TouchableOpacity, StyleSheet } from "react-native";
-import { Ionicons, Entypo } from "@expo/vector-icons";
+import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 export default function Header() {
   return (
@@ -10,12 +10,11 @@ export default function Header() {
         <Image
           source={require("../assets/images/logo.png")}
           style={styles.logo}
-          resizeMode="contain"
         />
-        <View>
-          <Text style={styles.title}>Let’s Read</Text>
+        {/* <View>
+          <Text style={styles.title}>Asian Books</Text>
           <Text style={styles.subtitle}>The Asia Foundation</Text>
-        </View>
+        </View> */}
       </View>
 
       {/* Language Selector */}
@@ -45,8 +44,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   logo: {
-    width: 40,
-    height: 40,
+    width: 190,
+    height: 50,
   },
   title: {
     fontSize: 16,

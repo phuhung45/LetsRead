@@ -28,7 +28,6 @@ const { width, height } = Dimensions.get("window");
 
 export default function ReadBookScreen() {
   const params = useLocalSearchParams();
-
   const cleanBookUuid = (params.book_uuid ?? "").toString().trim();
   const cleanLanguageId = (params.bookLang ?? "").toString().trim();
 
@@ -41,15 +40,18 @@ export default function ReadBookScreen() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [epubUrl, setEpubUrl] = useState<string | null>(null);
   const [bookTitle, setBookTitle] = useState<string>("");
+
   const [showDownloadPopup, setShowDownloadPopup] = useState(false);
-
   const flatRef = useRef<FlatList<any> | null>(null);
-  const pageScrollRefs = useRef([]);
+  const pageScrollRefs = useRef<any[]>([]);
+  const startTimeRef = useRef<number | null>(null);
+  const readingTimer = useRef<NodeJS.Timeout | null>(null);
 
-  /* ========== FETCH DATA ========== */
+  const [iosLangModal, setIosLangModal] = useState(false);
+
+  /* =================== FETCH DATA =================== */
   useEffect(() => {
     let mounted = true;
-
     const fetchBookData = async () => {
       try {
         setLoading(true);
@@ -61,11 +63,9 @@ export default function ReadBookScreen() {
           .eq("language_id", selectedLang)
           .maybeSingle();
 
-        const info = bookInfoData;
-
-        setPdfUrl(info?.pdf_url || null);
-        setEpubUrl(info?.epub_url || null);
-        setBookTitle(info?.title || "Untitled");
+        setPdfUrl(bookInfoData?.pdf_url || null);
+        setEpubUrl(bookInfoData?.epub_url || null);
+        setBookTitle(bookInfoData?.title || "Untitled");
 
         const { data } = await supabase
           .from("book_content_page")
@@ -94,24 +94,158 @@ export default function ReadBookScreen() {
         .in("id", uniqueIds);
 
       setLanguages(langs || []);
+      if (!selectedLang && langs?.[0]?.id) setSelectedLang(langs[0].id);
     };
 
     fetchLanguages();
     fetchBookData();
 
-    return () => (mounted = false);
+    return () => {
+      mounted = false;
+    };
   }, [cleanBookUuid, selectedLang]);
 
-  /* ========== CLEAN HTML ========== */
+  /* =================== CLEAN HTML =================== */
   const cleanHTML = (html: string) =>
     decode(
-      html
-        .replace(/<br\s*\/?>/gi, "\n")
-        .replace(/<\/?[^>]+(>|$)/g, "")
-        .trim()
+      html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[^>]+(>|$)/g, "").trim()
     );
 
-  /* ========== RENDER PAGE ========== */
+  /* =================== TRACK READING =================== */
+async function trackBookRead(
+  bookId: string,
+  languageId: string,
+  currentIdx: number,
+  totalPages: number
+) {
+  const { data: user } = await supabase.auth.getUser();
+  if (!user?.user?.id) return;
+  const userId = user.user.id;
+
+  const currentProgress = (currentIdx + 1) / totalPages;
+
+  try {
+    const { data: existing } = await supabase
+      .from("user_reads")
+      .select("id, progress")
+      .eq("user_id", userId)
+      .eq("book_id", bookId)
+      .eq("language_id", languageId)
+      .maybeSingle();
+
+    if (existing) {
+      // chỉ update nếu progress mới cao hơn
+      if (currentProgress > existing.progress) {
+        await supabase
+          .from("user_reads")
+          .update({
+            progress: currentProgress,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existing.id);
+      }
+    } else {
+      // chưa có bản ghi → insert
+      await supabase.from("user_reads").insert([
+        {
+          user_id: userId,
+          book_id: bookId,
+          language_id: languageId,
+          progress: currentProgress,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ]);
+    }
+  } catch (err) {
+    console.error("❌ trackBookRead error:", err);
+  }
+}
+
+
+
+
+  /* =================== READING LOG REALTIME =================== */
+  async function saveReadingLog() {
+    const { data: user } = await supabase.auth.getUser();
+    if (!user?.user?.id) return;
+    const userId = user.user.id;
+
+    if (!startTimeRef.current) return;
+
+    const now = Date.now();
+    const diffMs = now - startTimeRef.current;
+    const minutes = Math.floor(diffMs / 60000);
+    if (minutes <= 0) return;
+
+    const today = new Date().toISOString().split("T")[0];
+    console.debug(`🕒 [ReadingLog] +${minutes} min for ${cleanBookUuid}`);
+
+    const { data: existing, error: selErr } = await supabase
+      .from("reading_logs")
+      .select("id, minutes_read")
+      .eq("user_id", userId)
+      .eq("book_uuid", cleanBookUuid)
+      .eq("date", today)
+      .maybeSingle();
+
+    if (selErr) {
+      console.error("❌ reading_logs select error:", selErr);
+      return;
+    }
+
+    const nowISO = new Date().toISOString();
+
+    if (existing) {
+      const total = existing.minutes_read + minutes;
+      const { error: upErr } = await supabase
+        .from("reading_logs")
+        .update({
+          minutes_read: total,
+          updated_at: nowISO,
+          last_read_at: nowISO,
+        })
+        .eq("id", existing.id);
+      if (upErr) console.error("❌ Update error:", upErr);
+    } else {
+      const { error: insErr } = await supabase.from("reading_logs").insert([
+        {
+          user_id: userId,
+          book_uuid: cleanBookUuid,
+          date: today,
+          minutes_read: minutes,
+          updated_at: nowISO,
+          last_read_at: nowISO,
+        },
+      ]);
+      if (insErr) console.error("❌ Insert error:", insErr);
+    }
+
+    startTimeRef.current = Date.now();
+  }
+
+  const startReadingSession = () => {
+    startTimeRef.current = Date.now();
+    if (readingTimer.current) clearInterval(readingTimer.current);
+    readingTimer.current = setInterval(() => {
+      saveReadingLog();
+    }, 60000);
+  };
+
+  const stopReadingSession = () => {
+    if (readingTimer.current) {
+      clearInterval(readingTimer.current);
+      readingTimer.current = null;
+    }
+    saveReadingLog();
+  };
+
+  useEffect(() => {
+    startReadingSession();
+    return () => stopReadingSession();
+  }, []);
+
+  /* =================== RENDER PAGE =================== */
   const renderPage = ({ item, index }) => {
     const imageHeight = Math.min(height * 0.5, 1200);
 
@@ -155,14 +289,126 @@ export default function ReadBookScreen() {
     );
   };
 
-  /* ========== HANDLE PAGE SWIPE ========== */
-  const handleMomentumScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+  /* =================== PAGE SCROLL =================== */
+  const handleMomentumScrollEnd = (
+    e: NativeSyntheticEvent<NativeScrollEvent>
+  ) => {
     const idx = Math.round(e.nativeEvent.contentOffset.x / width);
     if (idx !== currentIndex) setCurrentIndex(idx);
+    if (pages.length)
+      trackBookRead(cleanBookUuid, selectedLang, idx, pages.length);
   };
 
-  /* ========== RENDER UI ========== */
+  /* =================== RENDER PICKER =================== */
+  const renderLangPicker = () => {
+    const selectedLangName =
+      languages.find((l) => l.id === selectedLang)?.name || "Select";
 
+    if (Platform.OS === "ios") {
+      return (
+        <>
+          <TouchableOpacity
+            style={[
+              styles.langPickerBtn,
+              { backgroundColor: darkMode ? "#333" : "#fff" },
+            ]}
+            onPress={() => languages.length > 0 && setIosLangModal(true)}
+            disabled={languages.length === 0}
+          >
+            <Text style={{ color: darkMode ? "#fff" : "#000", fontSize: 16 }}>
+              {selectedLangName}
+            </Text>
+            <Ionicons
+              name="chevron-down"
+              size={18}
+              color={darkMode ? "#fff" : "#000"}
+              style={{ marginLeft: 6 }}
+            />
+          </TouchableOpacity>
+
+          <Modal
+            visible={iosLangModal}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setIosLangModal(false)}
+          >
+            <Pressable
+              style={styles.iosPickerOverlay}
+              onPress={() => setIosLangModal(false)}
+            >
+              <View style={[styles.iosPickerBox, { maxHeight: height * 0.5 }]}>
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontWeight: "600",
+                    textAlign: "center",
+                    padding: 10,
+                  }}
+                >
+                  Select Language
+                </Text>
+                <FlatList
+                  data={languages}
+                  keyExtractor={(item) => item.id}
+                  renderItem={({ item }) => (
+                    <Pressable
+                      onPress={() => {
+                        setSelectedLang(item.id);
+                        setIosLangModal(false);
+                      }}
+                      style={{
+                        paddingVertical: 12,
+                        paddingHorizontal: 20,
+                        borderBottomWidth: 1,
+                        borderBottomColor: "#eee",
+                        backgroundColor: darkMode ? "#333" : "#fff",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: darkMode ? "#fff" : "#000",
+                          fontSize: 16,
+                        }}
+                      >
+                        {item.name}
+                      </Text>
+                    </Pressable>
+                  )}
+                />
+              </View>
+            </Pressable>
+          </Modal>
+        </>
+      );
+    }
+
+    // Android giữ nguyên
+    return (
+      <View
+        style={[
+          styles.langPicker,
+          { backgroundColor: darkMode ? "#333" : "#fff", marginTop: 20 },
+        ]}
+      >
+        <Picker
+          selectedValue={selectedLang}
+          onValueChange={(v) => setSelectedLang(v)}
+          dropdownIconColor={darkMode ? "#fff" : "#000"}
+          style={{ width: "100%", height: 40, color: darkMode ? "#fff" : "#000" }}
+        >
+          {languages.length > 0 ? (
+            languages.map((lang) => (
+              <Picker.Item key={lang.id} label={lang.name} value={lang.id} />
+            ))
+          ) : (
+            <Picker.Item label="Loading..." value="" />
+          )}
+        </Picker>
+      </View>
+    );
+  };
+
+  /* =================== UI =================== */
   if (loading)
     return (
       <View style={styles.center}>
@@ -185,7 +431,10 @@ export default function ReadBookScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor }}>
       {/* HEADER */}
       <View
-        style={[styles.header, { backgroundColor: darkMode ? "#222" : "#f0f0f0" }]}
+        style={[
+          styles.header,
+          { backgroundColor: darkMode ? "#222" : "#f0f0f0" },
+        ]}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <TouchableOpacity onPress={() => router.replace("/")}>
@@ -198,22 +447,7 @@ export default function ReadBookScreen() {
         </View>
 
         <View style={{ flex: 1, alignItems: "center" }}>
-          <View
-            style={[
-              styles.langPicker,
-              { backgroundColor: darkMode ? "#333" : "#fff" },
-            ]}
-          >
-            <Picker
-              selectedValue={selectedLang}
-              style={{ width: "100%", height: 38, color: textColor }}
-              onValueChange={(v) => setSelectedLang(v)}
-            >
-              {languages.map((lang) => (
-                <Picker.Item key={lang.id} label={lang.name} value={lang.id} />
-              ))}
-            </Picker>
-          </View>
+          {renderLangPicker()}
         </View>
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -224,7 +458,7 @@ export default function ReadBookScreen() {
         </View>
       </View>
 
-      {/* FLATLIST */}
+      {/* PAGES */}
       <FlatList
         ref={flatRef}
         horizontal
@@ -249,7 +483,11 @@ export default function ReadBookScreen() {
         <View
           style={[
             styles.pageIndicator,
-            { backgroundColor: darkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.25)" },
+            {
+              backgroundColor: darkMode
+                ? "rgba(255,255,255,0.15)"
+                : "rgba(0,0,0,0.25)",
+            },
           ]}
         >
           <Text
@@ -264,7 +502,7 @@ export default function ReadBookScreen() {
         </View>
       </View>
 
-      {/* PREV BUTTON - LEFT SIDE */}
+      {/* NAV BUTTONS */}
       <TouchableOpacity
         style={[styles.sideNavBtn, { left: 10 }]}
         disabled={currentIndex === 0}
@@ -275,13 +513,18 @@ export default function ReadBookScreen() {
               animated: true,
             });
             setCurrentIndex(currentIndex - 1);
+            trackBookRead(
+              cleanBookUuid,
+              selectedLang,
+              currentIndex - 1,
+              pages.length
+            );
           }
         }}
       >
         <Ionicons name="chevron-back" size={30} color="#fff" />
       </TouchableOpacity>
 
-      {/* NEXT BUTTON - RIGHT SIDE */}
       <TouchableOpacity
         style={[styles.sideNavBtn, { right: 10 }]}
         disabled={currentIndex === pages.length - 1}
@@ -292,6 +535,12 @@ export default function ReadBookScreen() {
               animated: true,
             });
             setCurrentIndex(currentIndex + 1);
+            trackBookRead(
+              cleanBookUuid,
+              selectedLang,
+              currentIndex + 1,
+              pages.length
+            );
           }
         }}
       >
@@ -310,13 +559,19 @@ export default function ReadBookScreen() {
             <Text style={styles.modalTitle}>Download Options</Text>
 
             {pdfUrl && (
-              <Pressable onPress={() => Linking.openURL(pdfUrl)} style={styles.modalRow}>
+              <Pressable
+                onPress={() => Linking.openURL(pdfUrl)}
+                style={styles.modalRow}
+              >
                 <Text style={styles.modalRowText}>📄 PDF</Text>
               </Pressable>
             )}
 
             {epubUrl && (
-              <Pressable onPress={() => Linking.openURL(epubUrl)} style={styles.modalRow}>
+              <Pressable
+                onPress={() => Linking.openURL(epubUrl)}
+                style={styles.modalRow}
+              >
                 <Text style={styles.modalRowText}>📘 EPUB</Text>
               </Pressable>
             )}
@@ -334,10 +589,9 @@ export default function ReadBookScreen() {
   );
 }
 
-/* ========== STYLES ========== */
+/* =================== STYLES =================== */
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
-
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -346,9 +600,7 @@ const styles = StyleSheet.create({
     paddingRight: "6%",
     paddingVertical: 10,
   },
-
   title: { fontSize: 18, fontWeight: "600", maxWidth: width * 0.4 },
-
   langPicker: {
     borderWidth: 1,
     borderColor: "#ccc",
@@ -356,44 +608,74 @@ const styles = StyleSheet.create({
     width: 160,
     overflow: "hidden",
   },
-
+  langPickerBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  iosPickerOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.3)",
+    justifyContent: "flex-end",
+  },
+  iosPickerBox: {
+    backgroundColor: "#fff",
+  },
+  iosPickerHeader: {
+    borderBottomWidth: 1,
+    borderBottomColor: "#ccc",
+    padding: 8,
+    alignItems: "flex-end",
+  },
   pageIndicatorWrap: {
     position: "absolute",
-    bottom: 24,
-    left: 0,
-    right: 0,
+    bottom: 70,
+    width: "100%",
     alignItems: "center",
   },
   pageIndicator: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 20,
   },
-
-  /* === NEW NEXT/PREV BUTTONS ON LEFT/RIGHT === */
   sideNavBtn: {
     position: "absolute",
     top: "50%",
     transform: [{ translateY: -25 }],
-    backgroundColor: "rgba(0,0,0,0.45)",
-    padding: 12,
-    borderRadius: 30,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    borderRadius: 20,
+    padding: 4,
   },
-
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     alignItems: "center",
   },
   modalBox: {
-    backgroundColor: "white",
-    width: Platform.OS === "web" ? "40%" : "80%",
-    borderRadius: 12,
-    paddingVertical: 20,
-    paddingHorizontal: 10,
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    padding: 16,
+    width: "80%",
   },
-  modalTitle: { fontSize: 18, fontWeight: "600", textAlign: "center", marginBottom: 10 },
-  modalRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#eee" },
-  modalRowText: { fontSize: 16, textAlign: "center" },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  modalRow: {
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
+  },
+  modalRowText: {
+    fontSize: 16,
+    textAlign: "center",
+  },
 });

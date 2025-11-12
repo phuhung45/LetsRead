@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, Image, TouchableOpacity, StyleSheet, Linking, useWindowDimensions } from "react-native";
+import { Image, Linking, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import FacebookIcon from "../assets/icons/FacebookIcon";
 import ProfileIcon from "../assets/icons/ProfileIcon";
 
@@ -18,8 +18,8 @@ export default function Footer() {
       >
         {/* Left: Logo + Info (50%) */}
         <View style={[styles.column, isDesktop ? { flex: 5 } : { width: "100%" }]}>
-          <Image source={require("../assets/images/logo.png")} style={styles.logo} resizeMode="contain" />
-          <Text style={styles.title}>Let’s Read is a program of The Asia Foundation</Text>
+          <Image source={require("../assets/images/logo.png")} style={styles.logo} />
+          <Text style={styles.title}>Asian Books is a free program</Text>
           <Text style={styles.desc}>
             The Asia Foundation is a nonprofit international development organization committed to improving lives and expanding opportunities across Asia and the Pacific. Informed by 70 years of experience and deep local knowledge, our work is focused on governance, education and leadership, environment and climate resilience, inclusive growth, international cooperation, and women’s empowerment.
           </Text>
@@ -48,8 +48,8 @@ export default function Footer() {
         {/* Connect */}
         <View style={[styles.column, isDesktop ? { flex: 1 } : isTablet ? { width: "30%" } : { width: "100%" }]}>
           <Text style={styles.title}>Connect</Text>
-          <TouchableOpacity><Text style={styles.link}>About Let's Read</Text></TouchableOpacity>
-          <TouchableOpacity><Text style={styles.link}>Let's Read Support</Text></TouchableOpacity>
+          <TouchableOpacity><Text style={styles.link}>About Asian Books</Text></TouchableOpacity>
+          <TouchableOpacity><Text style={styles.link}>Asian Books Support</Text></TouchableOpacity>
           <TouchableOpacity><FacebookIcon size={20} color="blue" /></TouchableOpacity>
           <TouchableOpacity style={styles.donateBtn}><Text style={styles.donateText}>♡ Donate</Text></TouchableOpacity>
         </View>
@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
   column: {
     marginVertical: 10,
   },
-  logo: { width: 150, height: 50, marginBottom: 10 },
+  logo: { width: 220, height: 50, marginBottom: 10 },
   title: { fontSize: 14, fontWeight: "700", color: "#111", marginBottom: 6 },
   desc: { fontSize: 12, color: "#333", lineHeight: 18 },
   storeBtn: { width: 130, height: 40, marginVertical: 4 },

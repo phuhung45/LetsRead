@@ -33,7 +33,7 @@ export default function AppIntro() {
               color: "#15803d",
             }}
           >
-            Let's Read Application
+            Asian Books Application
           </Text>
 
           {/* Tính năng */}

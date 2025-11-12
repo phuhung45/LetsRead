@@ -18,14 +18,14 @@ import HeaderMobile from "../../components/HeaderMobile";
 import HeaderDesktop from "../../components/HeaderDesktop";
 import FooterMobile from "../../components/FooterMobile";
 import FooterDesktop from "../../components/FooterDesktop";
-import BookDetailPopup from "../../components/BookDetailPopup"; // ✅ thêm dòng này
+import BookDetailPopup from "../../components/BookDetailPopup";
 import { router } from "expo-router";
 
 export default function AllBooks() {
   const [books, setBooks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedBook, setSelectedBook] = useState<any>(null); // ✅ book đang chọn
-  const [popupVisible, setPopupVisible] = useState(false); // ✅ popup hiển thị
+  const [selectedBook, setSelectedBook] = useState<any>(null);
+  const [popupVisible, setPopupVisible] = useState(false);
 
   const { width } = useWindowDimensions();
   const isWeb = Platform.OS === "web";
@@ -36,29 +36,35 @@ export default function AllBooks() {
   }, []);
 
   async function checkAuth() {
-    // ✅ Lấy session
     const { data: { session } } = await supabase.auth.getSession();
 
-    // ✅ Nếu không có session → chuyển sang profile
     if (!session) {
       router.replace("/profile");
       return;
     }
 
-    // ✅ Nếu có session → load sách
-    loadBooks();
+    loadBooks(session.user.id);
   }
 
-
-  async function loadBooks() {
+  // ✅ Load My Books từ bảng user_reads (CHUẨN)
+  async function loadBooks(userId: string) {
     setLoading(true);
+
     const { data, error } = await supabase
       .from("user_reads")
-      .select("*, books(*)")
+      .select(`
+        id,
+        progress,
+        updated_at,
+        book_id,
+        books:books (*)
+      `)
+      .eq("user_id", userId)            // ✅ load đúng user
       .order("updated_at", { ascending: false });
 
     if (error) console.error(error);
-    else setBooks(data || []);
+
+    setBooks(data || []);
     setLoading(false);
   }
 
@@ -134,6 +140,7 @@ export default function AllBooks() {
               <Text numberOfLines={1} style={styles.title}>
                 {item.books?.title}
               </Text>
+
               {item.progress < 1 ? (
                 <View style={{ alignItems: "center", marginTop: 4 }}>
                   <Progress.Bar
@@ -157,11 +164,11 @@ export default function AllBooks() {
 
       {isMobile ? <FooterMobile /> : <FooterDesktop />}
 
-      {/* ✅ Popup chi tiết sách */}
+      {/* ✅ Popup nhận đúng bookId */}
       {selectedBook && (
         <BookDetailPopup
           visible={popupVisible}
-          bookId={selectedBook.books?.id}
+          bookId={selectedBook.book_id}   // ✅ book_id đúng từ user_reads
           onClose={() => setPopupVisible(false)}
         />
       )}

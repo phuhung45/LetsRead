@@ -52,7 +52,6 @@ export default function HeaderDesktop() {
         <Image
           source={require("../assets/images/logo.png")}
           style={styles.logo}
-          resizeMode="contain"
         />
       </TouchableOpacity>
 
@@ -182,7 +181,7 @@ export default function HeaderDesktop() {
 
                 <TouchableOpacity style={styles.popupItem}>
                   <Ionicons name="information-circle-outline" size={18} color="green" />
-                  <Text style={styles.popupText}>About Let's Read</Text>
+                  <Text style={styles.popupText}>About Asian Books</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.popupItem}>
@@ -214,7 +213,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#ddd",
   },
-  logo: { width: 120, height: 40 },
+  logo: { width: 250, height: 40 },
   navCenter: { flexDirection: "row", alignItems: "center", gap: 24 },
   navButton: {
     flexDirection: "row",

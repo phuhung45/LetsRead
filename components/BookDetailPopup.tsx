@@ -9,10 +9,12 @@ import {
   ActivityIndicator,
   Alert,
   StyleSheet,
-  Linking,
   Pressable,
+  Platform,
+  ActionSheetIOS,
 } from "react-native";
 import { Picker } from "@react-native-picker/picker";
+import * as WebBrowser from "expo-web-browser";
 import { supabase } from "../lib/supabase";
 import { router } from "expo-router";
 
@@ -80,7 +82,6 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
       }
 
       const bookResult = { ...bookData, categories };
-
       setBook(bookResult);
       setBookCache((prev) => ({ ...prev, [language_id]: bookResult }));
     } catch {
@@ -90,7 +91,7 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
     }
   };
 
-  /* Load languages + default book */
+  /* Load languages */
   useEffect(() => {
     if (!visible || !bookId) {
       setBook(null);
@@ -130,12 +131,28 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
     fetchLanguages();
   }, [visible, bookId]);
 
-  /* Change language */
   useEffect(() => {
     if (visible && selectedLanguage) {
       fetchBookByLanguage(selectedLanguage);
     }
   }, [selectedLanguage]);
+
+  const handleIOSLanguageSelect = () => {
+    const options = languagesList.map((l) => l.name);
+    const ids = languagesList.map((l) => l.id);
+
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: [...options, "Cancel"],
+        cancelButtonIndex: options.length,
+      },
+      (index) => {
+        if (index < ids.length) {
+          setSelectedLanguage(ids[index]);
+        }
+      }
+    );
+  };
 
   /* Favorite */
   useEffect(() => {
@@ -162,7 +179,7 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
     const userId = user?.user?.id;
 
     if (!userId) {
-      Alert.alert("Thông báo", "Bạn cần đăng nhập.");
+      Alert.alert("Notice", "You need login");
       return;
     }
 
@@ -184,7 +201,7 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
         setIsFavorite(true);
       }
     } catch {
-      Alert.alert("Lỗi", "Không thể cập nhật yêu thích.");
+      Alert.alert("Error", "Can not update your favorite.");
     }
   };
 
@@ -200,6 +217,11 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
     }, 200);
   };
 
+  const openSafeUrl = async (url: string) => {
+    const safe = encodeURI(url).replace(/\+/g, "%2B");
+    await WebBrowser.openBrowserAsync(safe);
+  };
+
   const handleDownload = async () => {
     if (!book || !selectedLanguage) return;
 
@@ -210,8 +232,8 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
       .eq("language_id", selectedLanguage)
       .maybeSingle();
 
-    if (data?.pdf_url) return Linking.openURL(data.pdf_url);
-    if (data?.epub_url) return Linking.openURL(data.epub_url);
+    if (data?.pdf_url) return openSafeUrl(data.pdf_url);
+    if (data?.epub_url) return openSafeUrl(data.epub_url);
 
     Alert.alert("Không có file để tải");
   };
@@ -223,11 +245,10 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
-        {/* ✅ BACKDROP CLICK (KHÔNG CHẶN SCROLL) */}
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
 
-        {/* ✅ POPUP KHÔNG BỊ BLOCK GESTURE */}
         <View style={styles.popupContainer}>
+          {/* close */}
           <TouchableOpacity onPress={onClose} style={styles.closeButton}>
             <Text style={styles.closeButtonText}>✕</Text>
           </TouchableOpacity>
@@ -235,39 +256,47 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
           {loading ? (
             <View style={styles.loadingView}>
               <ActivityIndicator size="large" color="#4CAF50" />
-              <Text style={styles.loadingText}>Đang tải dữ liệu...</Text>
+              <Text style={styles.loadingText}>Loading book data...</Text>
             </View>
           ) : !book ? (
             <View style={styles.errorView}>
               <View style={styles.placeholderImage} />
-              <Text style={styles.errorText}>Không tìm thấy sách.</Text>
-              <TouchableOpacity onPress={onClose} style={styles.errorCloseButton}>
-                <Text style={styles.errorCloseButtonText}>Đóng</Text>
-              </TouchableOpacity>
+              <Text style={styles.errorText}>Can not find this book.</Text>
             </View>
           ) : (
             <ScrollView contentContainerStyle={styles.scrollViewContent}>
+              {/* cover */}
               <View style={styles.coverWrap}>
                 <Image source={{ uri: displayBook.cover_image }} style={styles.coverImage} />
               </View>
 
+              {/* title */}
               <Text style={styles.title}>{displayBook.title}</Text>
               <Text style={styles.author}>{displayBook.author}</Text>
 
-              {/* LANGUAGE + FAVORITE */}
+              {/* ✅ LANGUAGE SELECT FIX */}
               <View style={styles.langRow}>
-                <View style={styles.pickerWrapper}>
-                  <Picker
-                    selectedValue={selectedLanguage}
-                    onValueChange={(v) => setSelectedLanguage(v)}
-                    style={styles.languagePicker}
-                    dropdownIconColor="#333"
-                  >
-                    {languagesList.map((lang) => (
-                      <Picker.Item key={lang.id} label={lang.name} value={lang.id} />
-                    ))}
-                  </Picker>
-                </View>
+                {Platform.OS === "ios" ? (
+                  <TouchableOpacity onPress={handleIOSLanguageSelect} style={styles.pickerWrapper}>
+                    <Text style={styles.languagePicker}>
+                      {languagesList.find((l) => String(l.id) === String(selectedLanguage))?.name ||
+                        "Select Language"}
+                    </Text>
+
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.pickerWrapper}>
+                    <Picker
+                      selectedValue={selectedLanguage}
+                      onValueChange={(v) => setSelectedLanguage(v)}
+                      style={styles.languagePicker}
+                    >
+                      {languagesList.map((lang) => (
+                        <Picker.Item key={lang.id} label={lang.name} value={lang.id} />
+                      ))}
+                    </Picker>
+                  </View>
+                )}
 
                 <TouchableOpacity
                   style={[
@@ -298,6 +327,7 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
                 </TouchableOpacity>
               </View>
 
+              {/* description */}
               <Text style={styles.bookDescription}>
                 {displayBook.description || "Không có mô tả."}
               </Text>
@@ -320,7 +350,7 @@ export default function BookDetailPopup({ visible = false, bookId, onClose }: Pr
                 </View>
               </View>
 
-              {/* INFO SECTIONS */}
+              {/* DETAILS */}
               <View style={styles.detailsContainer}>
                 <View style={styles.hr} />
                 <InfoItem label="Publisher" value={displayBook.publisher} />
@@ -380,14 +410,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#e0e0e0",
     marginBottom: 20,
   },
-  errorText: { textAlign: "center", marginBottom: 20, fontSize: 16, color: "#d32f2f" },
-  errorCloseButton: {
-    backgroundColor: "#f0f0f0",
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 4,
-  },
-  errorCloseButtonText: { fontWeight: "bold", color: "#333" },
   scrollViewContent: {
     paddingHorizontal: "10%",
     paddingTop: 24,
@@ -405,6 +427,8 @@ const styles = StyleSheet.create({
   coverImage: { width: "100%", height: "100%" },
   title: { fontSize: 20, fontWeight: "700", textAlign: "center", marginTop: 6 },
   author: { textAlign: "center", color: "#1e88e5", marginBottom: 12 },
+
+  /* ✅ FIX iOS Picker */
   langRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -416,11 +440,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#eee",
     borderRadius: 8,
-    overflow: "hidden",
     height: 48,
+    justifyContent: "center",
     backgroundColor: "#fafafa",
+    paddingLeft: 12,
   },
-  languagePicker: { height: 48 },
+  languagePicker: {
+    fontSize: 14,
+    color: "#333",
+  },
+
   favoriteButton: {
     width: 60,
     height: 48,
@@ -431,10 +460,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#ddd",
   },
+
   favoriteButtonText: {
     fontSize: 20,
     fontWeight: "600",
   },
+
   readDownloadRow: {
     flexDirection: "row",
     width: "100%",
@@ -449,6 +480,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   readButtonText: { color: "#fff", fontWeight: "700" },
+
   downloadButton: {
     width: 60,
     justifyContent: "center",
@@ -460,7 +492,9 @@ const styles = StyleSheet.create({
     height: 48,
     marginLeft: 6,
   },
+
   downloadButtonText: { color: "#333", fontSize: 18 },
+
   bookDescription: {
     fontSize: 14,
     textAlign: "center",
@@ -468,6 +502,7 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     width: "100%",
   },
+
   statsContainer: {
     flexDirection: "row",
     justifyContent: "space-evenly",
@@ -478,17 +513,25 @@ const styles = StyleSheet.create({
     width: "100%",
     marginBottom: 20,
   },
+
   statBox: { flex: 1, alignItems: "center" },
   statBoxBorder: {
     borderLeftWidth: 1,
     borderRightWidth: 1,
     borderColor: "#ddd",
   },
+
   statLabel: { fontSize: 12, color: "#777", marginBottom: 6 },
   statValue: { fontSize: 18, fontWeight: "bold", color: "#111" },
+
   detailsContainer: { width: "100%", paddingVertical: 8 },
   hr: { height: 1, backgroundColor: "#eee", marginVertical: 12 },
-  infoRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8 },
+
+  infoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+  },
   infoLabel: { fontSize: 12, color: "#777" },
   infoValue: { fontSize: 14, color: "#333", fontWeight: "600" },
 });

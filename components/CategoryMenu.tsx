@@ -6,7 +6,7 @@ export default function Header() {
   return (
     <View style={styles.container}>
       <Image source={require("../assets/images/logo.png")} style={styles.logo} />
-      <Text style={styles.title}>Let's Read</Text>
+      <Text style={styles.title}>Asian Books</Text>
     </View>
   );
 }
